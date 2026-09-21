@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
                 var showProgressSheet by remember { mutableStateOf(false) }
                 var lastHandledJobDocId by remember { mutableStateOf<Int?>(null) }
 
-                // Khi tiến trình hoàn tất, lưu lịch sử và tự động chuyển sang Player ĐÚNG 1 LẦN
+                // Khi tiến trình hoàn tất tạo phụ đề, chuyển sang Tab Lồng Tiếng AI (tab 1)
                 LaunchedEffect(progress.stage, progress.resultDocument) {
                     if (progress.stage == ProcessStage.COMPLETED && progress.resultDocument != null && activeVideoUri != null) {
                         val docId = progress.resultDocument.hashCode()
@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
 
                             showProgressSheet = false
                             selectedTab = 1
-                            currentScreen = "player"
+                            currentScreen = "main"
                         }
                     }
                 }

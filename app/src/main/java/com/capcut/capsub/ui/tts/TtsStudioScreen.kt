@@ -100,6 +100,13 @@ fun TtsStudioScreen(
         mutableStateOf(currentSubtitleDoc)
     }
 
+    androidx.compose.runtime.LaunchedEffect(currentSubtitleDoc) {
+        activeDoc = currentSubtitleDoc
+    }
+    androidx.compose.runtime.LaunchedEffect(currentVideoUri) {
+        effectiveVideoUri = currentVideoUri
+    }
+
     var selectedVoice by remember {
         val savedVoiceId = repo.selectedTtsVoice
         mutableStateOf(VoicePresets.VIETNAMESE_VOICES.find { it.voiceType == savedVoiceId } ?: VoicePresets.DEFAULT_VOICE)
