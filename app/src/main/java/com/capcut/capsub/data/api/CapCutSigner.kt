@@ -15,6 +15,7 @@ import java.util.UUID
 import java.util.zip.CRC32
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlin.io.encoding.Base64
 
 /**
  * Module bảo mật, mã hóa chữ ký HTTP và AWS SigV4 cho CapCut Cloud & ByteDance VOD API.
@@ -25,6 +26,56 @@ object CapCutSigner {
     const val VOD_REGION = "sdwdmwlll"
     const val VOD_SERVICE = "vod"
     const val BASE_URL = "https://editor-api-sg.capcutapi.com"
+
+    const val TTS_SIGN_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmTd34Lw4b7IuldSXh/zY
+CMla+ITdGG5TeWz6ad+OySd4r+IrY45AoqrYUxhQ2dl+7z+i7r/5vEa8rr39BYfB
+8AGMQLmZA8HmgpWBsqrn/V6daUALkKnkLb70Fn32CJigIuGXAYqxUdGuI340aC+0
+v5Es3puJsHyzf01/AelE4Cdc6bZhQrASJLBh8R3BQToYClmDVSDUQk28o8sl/guA
+Z4n303Vj+6Siv1HayPCdV6kpVVnMBAG4+umUbwGmn132N3fgpzLarFF3XyWmS1zh
+D/J07iM/rP8GDO9IskHNHd2phrO0G6KzrcFAnTBHjVv+hCBEfzN/no3FNA9AuC36
+mwIDAQAB
+-----END PUBLIC KEY-----"""
+
+    fun base64Encode(bytes: ByteArray): String {
+        return Base64.encode(bytes)
+    }
+
+    fun base64Decode(str: String): ByteArray {
+        val clean = str.replace("\n", "").replace("\r", "").trim()
+        return Base64.decode(clean)
+    }
+
+    /**
+     * Mã hóa thông điệp bằng RSA PKCS#1 v1.5 với khóa công khai CapCut TTS.
+     */
+    fun rsaEncryptPkcs1v15(message: String, pem: String = TTS_SIGN_PUBLIC_KEY_PEM): String {
+        val cleanPem = pem
+            .replace("-----BEGIN PUBLIC KEY-----", "")
+            .replace("-----END PUBLIC KEY-----", "")
+            .replace("\\s".toRegex(), "")
+        val keyBytes = base64Decode(cleanPem)
+        val keySpec = java.security.spec.X509EncodedKeySpec(keyBytes)
+        val keyFactory = java.security.KeyFactory.getInstance("RSA")
+        val publicKey = keyFactory.generatePublic(keySpec)
+
+        val cipher = javax.crypto.Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, publicKey)
+        val encryptedBytes = cipher.doFinal(message.toByteArray(StandardCharsets.UTF_8))
+        return base64Encode(encryptedBytes)
+    }
+
+    /**
+     * Tạo chữ ký RSA cho inner payload của tác vụ Text-to-Speech (TTS).
+     */
+    fun makeTtsPayloadSign(ssml: String, extraInfo: String?, deviceId: String, appId: String): String {
+        val ssmlMd5 = md5(ssml)
+        var signInput = "appid:$appId&did:$deviceId&creditDisable:false&ssml:$ssmlMd5"
+        if (extraInfo != null) {
+            signInput += "&extraInfo:$extraInfo"
+        }
+        return rsaEncryptPkcs1v15(signInput)
+    }
 
     fun md5(input: String): String = md5(input.toByteArray(StandardCharsets.UTF_8))
 

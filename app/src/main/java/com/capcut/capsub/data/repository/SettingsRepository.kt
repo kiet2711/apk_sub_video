@@ -74,4 +74,20 @@ class SettingsRepository(context: Context) {
     var geminiThreadCount: Int
         get() = prefs.getInt("gemini_thread_count", 2).coerceIn(1, 10)
         set(value) = prefs.edit().putInt("gemini_thread_count", value.coerceIn(1, 10)).apply()
+
+    var ttsThreadCount: Int
+        get() = prefs.getInt("tts_thread_count", 50).coerceIn(1, 100)
+        set(value) = prefs.edit().putInt("tts_thread_count", value.coerceIn(1, 100)).apply()
+
+    var selectedTtsVoice: String
+        get() = prefs.getString("selected_tts_voice", "ICL_uranus_vi_female_yuenan1") ?: "ICL_uranus_vi_female_yuenan1"
+        set(value) = prefs.edit().putString("selected_tts_voice", value).apply()
+
+    var originalAudioVolume: Float
+        get() = prefs.getFloat("original_audio_volume", 1.0f).coerceIn(0f, 1f)
+        set(value) = prefs.edit().putFloat("original_audio_volume", value.coerceIn(0f, 1f)).apply()
+
+    var aiAudioVolume: Float
+        get() = prefs.getFloat("ai_audio_volume", 1.0f).coerceIn(0f, 1f)
+        set(value) = prefs.edit().putFloat("ai_audio_volume", value.coerceIn(0f, 1f)).apply()
 }

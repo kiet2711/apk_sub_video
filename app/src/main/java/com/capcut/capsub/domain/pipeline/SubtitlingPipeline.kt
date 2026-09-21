@@ -183,6 +183,7 @@ class SubtitlingPipeline(
             results.forEach { (_, doc) ->
                 allSubtitles.items.addAll(doc.items)
             }
+            allSubtitles.reindex()
 
             if (allSubtitles.isEmpty) {
                 throw IllegalStateException("Không nhận diện được bất kỳ câu thoại nào trong tệp này.")

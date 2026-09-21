@@ -1,11 +1,14 @@
 package com.capcut.capsub.data.model
 
 data class SubtitleItem(
-    val id: Int,
+    var id: Int,
     val startMs: Long,
     val endMs: Long,
-    val originalText: String,
-    var translatedText: String = ""
+    var originalText: String,
+    var translatedText: String = "",
+    var audioFilePath: String? = null,
+    var audioDurationMs: Long = 0L,
+    var playbackSpeed: Float = 1.0f
 ) {
     /**
      * Lấy nội dung hiển thị theo chế độ:

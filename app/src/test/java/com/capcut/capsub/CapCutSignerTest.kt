@@ -58,4 +58,25 @@ class CapCutSignerTest {
         assertTrue(auth.contains("SignedHeaders=x-amz-date;x-amz-security-token"))
         assertTrue(auth.contains("Signature="))
     }
+
+    @Test
+    fun testMakeTtsPayloadSign() {
+        val ssml = "<speak><voice name=\"BV074_streaming\"><prosody rate=\"1.0\">Xin chào</prosody></voice></speak>"
+        val extraInfo = "{\"benefit_info\":{}}"
+        val deviceId = "1234567890123456789"
+        val appId = "359289"
+
+        val sign = CapCutSigner.makeTtsPayloadSign(ssml, extraInfo, deviceId, appId)
+        // Chữ ký RSA PKCS#1 v1.5 với khóa 2048-bit luôn có kích thước 256 bytes, mã hóa Base64 là 344 ký tự
+        assertTrue(sign.isNotBlank())
+        assertEquals(344, sign.length)
+    }
+
+    @Test
+    fun testVoicePresets() {
+        val voices = com.capcut.capsub.data.model.VoicePresets.VIETNAMESE_VOICES
+        assertTrue(voices.isNotEmpty())
+        assertTrue(voices.any { it.displayName.contains("Dịu Dàng") })
+        assertTrue(voices.all { it.voiceType.isNotBlank() && it.resourceId.isNotBlank() })
+    }
 }

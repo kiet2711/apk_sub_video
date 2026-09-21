@@ -88,7 +88,13 @@ object AudioExtractor {
                 if (sampleTimeUs > endUs) break
 
                 bufferInfo.presentationTimeUs = sampleTimeUs
-                bufferInfo.flags = extractor.sampleFlags
+                bufferInfo.flags = if (
+                    extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
+                ) {
+                    MediaCodec.BUFFER_FLAG_KEY_FRAME
+                } else {
+                    0
+                }
                 muxer.writeSampleData(muxerAudioTrackIndex, buffer, bufferInfo)
 
                 if (totalDurationUs > 0 && progressCallback != null) {

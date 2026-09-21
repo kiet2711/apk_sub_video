@@ -12,19 +12,19 @@ data class DeviceConfig(
     var deviceType: String = "MacBookPro17,4",
     var deviceBrand: String = "MacBookPro17,4",
     var osVersion: String = "15.7.4",
-    var deviceId: String = "7647145645564632872",
-    var iid: String = "7647145645564632872",
+    var deviceId: String = "76471456455646328721",
+    var iid: String = "76471456455646328721",
     var region: String = "VN",
     var loc: String = "VN",
     var lan: String = "vi-VN",
     var pf: String = "3",
-    var tdid: String = "7647145645564632872"
+    var tdid: String = "76471456455646328721"
 ) {
     /**
-     * Tạo mới bộ ID ngẫu nhiên (19-20 chữ số) để làm mới danh tính thiết bị, tránh bị rate-limit.
+     * Tạo mới bộ ID ngẫu nhiên (20 chữ số) để làm mới danh tính thiết bị, tránh bị rate-limit.
      */
     fun randomize(): DeviceConfig {
-        val newId = (1000000000000000000L + Random.nextLong(8999999999999999999L)).toString()
+        val newId = (1000000000000000000L + Random.nextLong(8999999999999999999L)).toString() + "1"
         this.deviceId = newId
         this.iid = newId
         this.tdid = newId

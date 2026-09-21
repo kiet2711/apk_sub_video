@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ClosedCaptionDisabled
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Tune
@@ -106,14 +107,27 @@ fun VideoPlayerScreen(
         }
     }
 
+    var originalVolume by remember { mutableStateOf(repo.originalAudioVolume) }
+    var aiVolume by remember { mutableStateOf(repo.aiAudioVolume) }
+    var showVolumeSheet by remember { mutableStateOf(false) }
+
     DisposableEffect(videoUri) {
-        playerManager.initialize(videoUri)
+        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, repo.selectedTtsVoice)
+        playerManager.initialize(videoUri, originalVolume)
+        playerManager.ttsAudioScheduler.setSubtitleDocument(subtitleDoc)
+        playerManager.ttsAudioScheduler.setAiVolume(aiVolume)
         onDispose {
             playerManager.release()
         }
     }
 
     var subtitleDocVersion by remember { mutableStateOf(0) }
+
+    androidx.compose.runtime.LaunchedEffect(subtitleDoc, subtitleDocVersion) {
+        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, repo.selectedTtsVoice)
+        playerManager.ttsAudioScheduler.setSubtitleDocument(subtitleDoc)
+    }
+
     val currentPositionMs by playerManager.currentPositionMs.collectAsState()
     val activeSubtitle = remember(currentPositionMs, subtitleDocVersion) {
         subtitleDoc.getActiveItem(currentPositionMs)
@@ -242,6 +256,12 @@ fun VideoPlayerScreen(
 
                     Spacer(modifier = Modifier.width(4.dp))
 
+                    IconButton(onClick = { showVolumeSheet = true }) {
+                        Icon(Icons.Default.GraphicEq, contentDescription = "Âm lượng", tint = PrimaryEmerald)
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
                     IconButton(onClick = { exportSrtLauncher.launch("subtitles.srt") }) {
                         Icon(Icons.Default.FileDownload, contentDescription = "Lưu SRT", tint = Color.White)
                     }
@@ -309,6 +329,13 @@ fun VideoPlayerScreen(
                         // Nút mở bảng Tùy chỉnh Sub Live
                         IconButton(onClick = { showCustomizerSheet = true }) {
                             Icon(Icons.Default.Tune, contentDescription = "Chỉnh Sub", tint = PrimaryEmerald)
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // Nút mở bảng Điều Khiển Âm Lượng Kép
+                        IconButton(onClick = { showVolumeSheet = true }) {
+                            Icon(Icons.Default.GraphicEq, contentDescription = "Âm lượng", tint = PrimaryEmerald)
                         }
 
                         Spacer(modifier = Modifier.width(4.dp))
@@ -420,6 +447,24 @@ fun VideoPlayerScreen(
                 repo.subtitleColorHex = it
             },
             onDismiss = { showCustomizerSheet = false }
+        )
+    }
+
+    if (showVolumeSheet) {
+        DualVolumeSheet(
+            originalVolume = originalVolume,
+            aiVolume = aiVolume,
+            onOriginalVolumeChange = {
+                originalVolume = it
+                repo.originalAudioVolume = it
+                playerManager.setOriginalVolume(it)
+            },
+            onAiVolumeChange = {
+                aiVolume = it
+                repo.aiAudioVolume = it
+                playerManager.ttsAudioScheduler.setAiVolume(it)
+            },
+            onDismiss = { showVolumeSheet = false }
         )
     }
 }

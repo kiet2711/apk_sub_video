@@ -22,6 +22,8 @@ class PlayerManager(private val context: Context) {
     var exoPlayer: ExoPlayer? = null
         private set
 
+    val ttsAudioScheduler = TtsAudioScheduler(context)
+
     private val scope = CoroutineScope(Dispatchers.Main + Job())
     private var tickerJob: Job? = null
 
@@ -34,11 +36,15 @@ class PlayerManager(private val context: Context) {
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying
 
-    fun initialize(videoUri: Uri) {
-        release()
+    fun initialize(videoUri: Uri, originalVolume: Float = 1.0f) {
+        tickerJob?.cancel()
+        exoPlayer?.release()
+        exoPlayer = null
+        ttsAudioScheduler.initializePlayers()
 
         val player = ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(videoUri))
+            volume = originalVolume.coerceIn(0f, 1f)
             prepare()
             playWhenReady = true
 
@@ -51,6 +57,9 @@ class PlayerManager(private val context: Context) {
 
                 override fun onIsPlayingChanged(playing: Boolean) {
                     _isPlaying.value = playing
+                    if (!playing) {
+                        ttsAudioScheduler.pause()
+                    }
                 }
             })
         }
@@ -59,35 +68,45 @@ class PlayerManager(private val context: Context) {
         startPositionTicker()
     }
 
+    fun setOriginalVolume(volume: Float) {
+        exoPlayer?.volume = volume.coerceIn(0f, 1f)
+    }
+
     private fun startPositionTicker() {
         tickerJob?.cancel()
         tickerJob = scope.launch {
             while (isActive) {
-                exoPlayer?.let {
-                    _currentPositionMs.value = it.currentPosition.coerceAtLeast(0L)
+                exoPlayer?.let { player ->
+                    val pos = player.currentPosition.coerceAtLeast(0L)
+                    _currentPositionMs.value = pos
+                    ttsAudioScheduler.onVideoPositionUpdate(pos, player.isPlaying)
                 }
-                delay(50) // Cập nhật vị trí mỗi 50ms để đồng bộ phụ đề mượt mà
+                delay(50) // Cập nhật vị trí mỗi 50ms để đồng bộ phụ đề và audio mượt mà
             }
         }
     }
 
     fun play() {
         exoPlayer?.play()
+        ttsAudioScheduler.resume()
     }
 
     fun pause() {
         exoPlayer?.pause()
+        ttsAudioScheduler.pause()
     }
 
     fun togglePlayPause() {
         exoPlayer?.let {
-            if (it.isPlaying) it.pause() else it.play()
+            if (it.isPlaying) pause() else play()
         }
     }
 
     fun seekTo(positionMs: Long) {
-        exoPlayer?.seekTo(positionMs.coerceAtLeast(0L))
-        _currentPositionMs.value = positionMs
+        val safePos = positionMs.coerceAtLeast(0L)
+        exoPlayer?.seekTo(safePos)
+        _currentPositionMs.value = safePos
+        ttsAudioScheduler.onSeek(safePos)
     }
 
     fun forward10Seconds() {
@@ -104,6 +123,7 @@ class PlayerManager(private val context: Context) {
 
     fun release() {
         tickerJob?.cancel()
+        ttsAudioScheduler.release()
         exoPlayer?.release()
         exoPlayer = null
     }

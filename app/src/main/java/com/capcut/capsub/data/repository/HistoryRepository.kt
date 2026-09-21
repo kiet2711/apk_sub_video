@@ -102,7 +102,9 @@ class HistoryRepository(private val context: Context) {
         val srtFile = File(item.srtFilePath)
         if (!srtFile.exists()) return SubtitleDocument()
         val content = srtFile.readText(Charsets.UTF_8)
-        return SubtitleDocument.parseSrt(content)
+        val doc = SubtitleDocument.parseSrt(content)
+        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, doc)
+        return doc
     }
 
     fun updateSubtitleForUri(videoUri: Uri, document: SubtitleDocument) = synchronized(fileLock) {

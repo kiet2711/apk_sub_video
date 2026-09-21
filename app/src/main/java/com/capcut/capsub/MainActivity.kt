@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -43,6 +44,7 @@ import com.capcut.capsub.ui.theme.CapSubTheme
 import com.capcut.capsub.ui.theme.DarkBackground
 import com.capcut.capsub.ui.theme.DarkCard
 import com.capcut.capsub.ui.theme.PrimaryEmerald
+import com.capcut.capsub.ui.tts.TtsStudioScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -128,6 +130,20 @@ class MainActivity : ComponentActivity() {
                                     NavigationBarItem(
                                         selected = selectedTab == 1,
                                         onClick = { selectedTab = 1 },
+                                        icon = { Icon(Icons.Default.RecordVoiceOver, contentDescription = "Lồng Tiếng AI") },
+                                        label = { Text("Lồng Tiếng AI") },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = PrimaryEmerald,
+                                            selectedTextColor = PrimaryEmerald,
+                                            indicatorColor = PrimaryEmerald.copy(alpha = 0.2f),
+                                            unselectedIconColor = Color.Gray,
+                                            unselectedTextColor = Color.Gray
+                                        )
+                                    )
+
+                                    NavigationBarItem(
+                                        selected = selectedTab == 2,
+                                        onClick = { selectedTab = 2 },
                                         icon = { Icon(Icons.Default.VideoLibrary, contentDescription = "Lịch Sử & Player") },
                                         label = { Text("Lịch Sử & Player") },
                                         colors = NavigationBarItemDefaults.colors(
@@ -146,47 +162,65 @@ class MainActivity : ComponentActivity() {
                                     .fillMaxSize()
                                     .padding(paddingValues)
                             ) {
-                                if (selectedTab == 0) {
-                                    HomeScreen(
-                                        onNavigateToSettings = { currentScreen = "settings" },
-                                        onStartProcessing = { uri, name, durationMs, sourceLang, targetLang, model, style, customPrompt ->
-                                            if (model.startsWith("gemini") && repo.geminiApiKeys.isEmpty()) {
-                                                Toast.makeText(this@MainActivity, "Vui lòng nhập Gemini API Key trong Cài đặt trước khi dùng Gemini!", Toast.LENGTH_LONG).show()
-                                                currentScreen = "settings"
-                                                return@HomeScreen
+                                when (selectedTab) {
+                                    0 -> {
+                                        HomeScreen(
+                                            onNavigateToSettings = { currentScreen = "settings" },
+                                            onStartProcessing = { uri, name, durationMs, sourceLang, targetLang, model, style, customPrompt ->
+                                                if (model.startsWith("gemini") && repo.geminiApiKeys.isEmpty()) {
+                                                    Toast.makeText(this@MainActivity, "Vui lòng nhập Gemini API Key trong Cài đặt trước khi dùng Gemini!", Toast.LENGTH_LONG).show()
+                                                    currentScreen = "settings"
+                                                    return@HomeScreen
+                                                }
+
+                                                activeVideoUri = uri
+
+                                                showProgressSheet = true
+                                                repo.selectedModel = model
+                                                repo.selectedStyle = style
+                                                repo.targetLanguage = targetLang
+                                                if (style == "custom" && customPrompt.isNotBlank()) {
+                                                    repo.geminiCustomPrompt = customPrompt
+                                                }
+                                                lastHandledJobDocId = null
+
+                                                TranscribeWorkerService.start(
+                                                    context = this@MainActivity,
+                                                    videoUri = uri,
+                                                    videoName = name,
+                                                    durationMs = durationMs,
+                                                    sourceLang = sourceLang,
+                                                    customPrompt = customPrompt,
+                                                    outSrtFile = null
+                                                )
                                             }
-
-                                            activeVideoUri = uri
-
-                                            showProgressSheet = true
-                                            repo.selectedModel = model
-                                            repo.selectedStyle = style
-                                            repo.targetLanguage = targetLang
-                                            if (style == "custom" && customPrompt.isNotBlank()) {
-                                                repo.geminiCustomPrompt = customPrompt
+                                        )
+                                    }
+                                    1 -> {
+                                        TtsStudioScreen(
+                                            currentSubtitleDoc = activeSubtitleDoc,
+                                            currentVideoUri = activeVideoUri,
+                                            onSubtitleLoaded = { doc ->
+                                                activeSubtitleDoc = doc
+                                            },
+                                            onNavigateToPlayer = { uri, doc ->
+                                                activeVideoUri = uri ?: activeVideoUri
+                                                activeSubtitleDoc = doc
+                                                currentScreen = "player"
+                                            },
+                                            onNavigateToSettings = { currentScreen = "settings" }
+                                        )
+                                    }
+                                    else -> {
+                                        HistoryScreen(
+                                            onNavigateToSettings = { currentScreen = "settings" },
+                                            onPlayHistoryItem = { uri, doc ->
+                                                activeVideoUri = uri
+                                                activeSubtitleDoc = doc
+                                                currentScreen = "player"
                                             }
-                                            lastHandledJobDocId = null
-
-                                            TranscribeWorkerService.start(
-                                                context = this@MainActivity,
-                                                videoUri = uri,
-                                                videoName = name,
-                                                durationMs = durationMs,
-                                                sourceLang = sourceLang,
-                                                customPrompt = customPrompt,
-                                                outSrtFile = null
-                                            )
-                                        }
-                                    )
-                                } else {
-                                    HistoryScreen(
-                                        onNavigateToSettings = { currentScreen = "settings" },
-                                        onPlayHistoryItem = { uri, doc ->
-                                            activeVideoUri = uri
-                                            activeSubtitleDoc = doc
-                                            currentScreen = "player"
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
 
                                 if (showProgressSheet || progress.isRunning) {

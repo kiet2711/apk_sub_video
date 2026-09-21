@@ -7,9 +7,17 @@ data class SubtitleDocument(
     val size: Int get() = items.size
     val isEmpty: Boolean get() = items.isEmpty()
 
+    fun reindex() {
+        items.sortBy { it.startMs }
+        items.forEachIndexed { index, item ->
+            item.id = index + 1
+        }
+    }
+
     fun getActiveItem(currentPositionMs: Long): SubtitleItem? {
-        // Tìm câu phụ đề khớp với thời điểm phát hiện tại
-        return items.firstOrNull { currentPositionMs in it.startMs..it.endMs }
+        // Tìm câu phụ đề khớp với thời điểm phát hiện tại (ưu tiên [startMs, endMs) để tránh dính biên)
+        return items.firstOrNull { currentPositionMs >= it.startMs && currentPositionMs < it.endMs }
+            ?: items.firstOrNull { currentPositionMs in it.startMs..it.endMs }
     }
 
     /**
@@ -104,11 +112,13 @@ data class SubtitleDocument(
                         startMs = startMs,
                         endMs = endMs,
                         originalText = text,
-                        translatedText = ""
+                        translatedText = text
                     )
                 )
             }
-            return SubtitleDocument(list)
+            val doc = SubtitleDocument(list)
+            doc.reindex()
+            return doc
         }
 
         private fun parseSrtTimestamp(timestampStr: String): Long {
