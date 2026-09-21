@@ -64,17 +64,39 @@ class MainActivity : ComponentActivity() {
                 var currentScreen by remember { mutableStateOf("main") } // "main", "settings", "player"
                 var selectedTab by remember { mutableStateOf(0) } // 0: Studio (Tạo Phụ Đề), 1: Lịch Sử & Player
                 var activeVideoUri by remember { mutableStateOf<Uri?>(null) }
+                var activeVideoName by remember { mutableStateOf("") }
+                var activeVideoDurationMs by remember { mutableStateOf(0L) }
+                var activeSourceLang by remember { mutableStateOf("zh-CN") }
                 var activeSubtitleDoc by remember { mutableStateOf<SubtitleDocument?>(null) }
                 var showProgressSheet by remember { mutableStateOf(false) }
                 var lastHandledJobDocId by remember { mutableStateOf<Int?>(null) }
 
-                // Khi tiến trình hoàn tất, chỉ tự động chuyển sang Player ĐÚNG 1 LẦN (không bị kẹt khi bấm nút quay lại)
+                // Khi tiến trình hoàn tất, lưu lịch sử và tự động chuyển sang Player ĐÚNG 1 LẦN
                 LaunchedEffect(progress.stage, progress.resultDocument) {
                     if (progress.stage == ProcessStage.COMPLETED && progress.resultDocument != null && activeVideoUri != null) {
                         val docId = progress.resultDocument.hashCode()
                         if (docId != lastHandledJobDocId) {
                             lastHandledJobDocId = docId
-                            activeSubtitleDoc = progress.resultDocument
+                            val doc = progress.resultDocument!!
+                            activeSubtitleDoc = doc
+
+                            // Đảm bảo lưu lịch sử tức thì
+                            try {
+                                val historyRepo = com.capcut.capsub.data.repository.HistoryRepository(this@MainActivity)
+                                val vUri = activeVideoUri!!
+                                val vName = activeVideoName.ifBlank { "Video_${System.currentTimeMillis()}" }
+                                historyRepo.saveHistory(
+                                    videoUri = vUri,
+                                    videoName = vName,
+                                    durationMs = activeVideoDurationMs,
+                                    document = doc,
+                                    translationEngine = repo.selectedModel,
+                                    sourceLanguage = activeSourceLang
+                                )
+                            } catch (e: Exception) {
+                                android.util.Log.e("MainActivity", "Failed to auto-save history: ${e.message}", e)
+                            }
+
                             showProgressSheet = false
                             selectedTab = 1
                             currentScreen = "player"
@@ -147,7 +169,7 @@ class MainActivity : ComponentActivity() {
                                 if (selectedTab == 0) {
                                     HomeScreen(
                                         onNavigateToSettings = { currentScreen = "settings" },
-                                        onStartProcessing = { uri, durationMs, sourceLang, targetLang, model, style ->
+                                        onStartProcessing = { uri, name, durationMs, sourceLang, targetLang, model, style, customPrompt ->
                                             if (model.startsWith("gemini") && repo.geminiApiKeys.isEmpty()) {
                                                 Toast.makeText(this@MainActivity, "Vui lòng nhập Gemini API Key trong Cài đặt trước khi dùng Gemini!", Toast.LENGTH_LONG).show()
                                                 currentScreen = "settings"
@@ -155,17 +177,26 @@ class MainActivity : ComponentActivity() {
                                             }
 
                                             activeVideoUri = uri
+                                            activeVideoName = name
+                                            activeVideoDurationMs = durationMs
+                                            activeSourceLang = sourceLang
+
                                             showProgressSheet = true
                                             repo.selectedModel = model
                                             repo.selectedStyle = style
                                             repo.targetLanguage = targetLang
+                                            if (style == "custom" && customPrompt.isNotBlank()) {
+                                                repo.geminiCustomPrompt = customPrompt
+                                            }
                                             lastHandledJobDocId = null
 
                                             TranscribeWorkerService.start(
                                                 context = this@MainActivity,
                                                 videoUri = uri,
+                                                videoName = name,
                                                 durationMs = durationMs,
                                                 sourceLang = sourceLang,
+                                                customPrompt = customPrompt,
                                                 outSrtFile = null
                                             )
                                         }

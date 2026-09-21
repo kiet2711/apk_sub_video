@@ -54,19 +54,23 @@ class TranscribeWorkerService : Service() {
         }
 
         val videoUriStr = intent?.getStringExtra(EXTRA_VIDEO_URI) ?: return START_NOT_STICKY
+        val videoNameExtra = intent.getStringExtra(EXTRA_VIDEO_NAME)
         val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
         val sourceLang = intent.getStringExtra(EXTRA_SOURCE_LANG) ?: "zh-CN"
+        val customPromptExtra = intent.getStringExtra(EXTRA_CUSTOM_PROMPT)
         val outSrtPath = intent.getStringExtra(EXTRA_OUT_SRT)
 
         startForeground(NOTIFICATION_ID, buildNotification("Đang chuẩn bị xử lý...", 0))
 
         val repo = SettingsRepository(this)
+        val finalCustomPrompt = if (!customPromptExtra.isNullOrBlank()) customPromptExtra else repo.geminiCustomPrompt
+
         val pipeline = SubtitlingPipeline(
             context = applicationContext,
             apiKeys = repo.geminiApiKeys,
             translationEngine = repo.selectedModel,
             stylePreset = repo.selectedStyle,
-            customPrompt = repo.geminiCustomPrompt,
+            customPrompt = finalCustomPrompt,
             targetLanguage = repo.targetLanguage,
             geminiThreadCount = repo.geminiThreadCount
         )
@@ -92,7 +96,7 @@ class TranscribeWorkerService : Service() {
                 try {
                     val historyRepo = com.capcut.capsub.data.repository.HistoryRepository(applicationContext)
                     val vUri = Uri.parse(videoUriStr)
-                    val vName = getFileName(applicationContext, vUri) ?: "Video_${System.currentTimeMillis()}"
+                    val vName = videoNameExtra ?: getFileName(applicationContext, vUri) ?: "Video_${System.currentTimeMillis()}"
                     historyRepo.saveHistory(
                         videoUri = vUri,
                         videoName = vName,
@@ -102,7 +106,7 @@ class TranscribeWorkerService : Service() {
                         sourceLanguage = sourceLang
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("CapSubWorker", "Failed to save history: ${e.message}")
+                    android.util.Log.e("CapSubWorker", "Failed to save history: ${e.message}", e)
                 }
             } catch (e: Exception) {
                 // Handled in pipeline
@@ -186,19 +190,33 @@ class TranscribeWorkerService : Service() {
         const val NOTIFICATION_ID = 1001
 
         const val EXTRA_VIDEO_URI = "extra_video_uri"
+        const val EXTRA_VIDEO_NAME = "extra_video_name"
         const val EXTRA_DURATION_MS = "extra_duration_ms"
         const val EXTRA_SOURCE_LANG = "extra_source_lang"
+        const val EXTRA_CUSTOM_PROMPT = "extra_custom_prompt"
         const val EXTRA_OUT_SRT = "extra_out_srt"
         const val ACTION_CANCEL = "com.capcut.capsub.ACTION_CANCEL"
 
         private val _sharedProgressFlow = MutableStateFlow(ProcessProgress())
         val sharedProgressFlow: StateFlow<ProcessProgress> = _sharedProgressFlow
 
-        fun start(context: Context, videoUri: Uri, durationMs: Long, sourceLang: String, outSrtFile: File?) {
+        fun start(
+            context: Context,
+            videoUri: Uri,
+            videoName: String,
+            durationMs: Long,
+            sourceLang: String,
+            customPrompt: String,
+            outSrtFile: File?
+        ) {
             val intent = Intent(context, TranscribeWorkerService::class.java).apply {
+                data = videoUri
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 putExtra(EXTRA_VIDEO_URI, videoUri.toString())
+                putExtra(EXTRA_VIDEO_NAME, videoName)
                 putExtra(EXTRA_DURATION_MS, durationMs)
                 putExtra(EXTRA_SOURCE_LANG, sourceLang)
+                putExtra(EXTRA_CUSTOM_PROMPT, customPrompt)
                 putExtra(EXTRA_OUT_SRT, outSrtFile?.absolutePath)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

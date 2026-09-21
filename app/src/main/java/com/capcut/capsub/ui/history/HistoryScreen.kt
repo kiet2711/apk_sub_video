@@ -40,6 +40,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,15 +72,11 @@ fun HistoryScreen(
 ) {
     val context = LocalContext.current
     val historyRepo = remember { HistoryRepository(context) }
-    var historyList by remember { mutableStateOf(emptyList<HistoryItem>()) }
+    val historyList by HistoryRepository.historyFlow.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
 
-    fun refreshHistory() {
-        historyList = historyRepo.getHistoryList()
-    }
-
     LaunchedEffect(Unit) {
-        refreshHistory()
+        historyRepo.refreshHistory()
     }
 
     // Xuất SRT
@@ -237,7 +234,6 @@ fun HistoryScreen(
                             },
                             onDelete = {
                                 historyRepo.deleteHistory(item.id)
-                                refreshHistory()
                             }
                         )
                     }
@@ -250,7 +246,7 @@ fun HistoryScreen(
                 onDismiss = { showImportDialog = false },
                 onSuccessPlay = { uri, doc ->
                     showImportDialog = false
-                    refreshHistory()
+                    historyRepo.refreshHistory()
                     onPlayHistoryItem(uri, doc)
                 }
             )

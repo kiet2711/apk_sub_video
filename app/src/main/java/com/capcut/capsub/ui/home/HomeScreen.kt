@@ -1,5 +1,6 @@
 package com.capcut.capsub.ui.home
 
+import android.content.Intent
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -38,6 +39,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -65,7 +68,7 @@ import com.capcut.capsub.ui.theme.PrimaryEmerald
 @Composable
 fun HomeScreen(
     onNavigateToSettings: () -> Unit,
-    onStartProcessing: (Uri, Long, String, String, String, String) -> Unit
+    onStartProcessing: (Uri, String, Long, String, String, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
     val repo = remember { com.capcut.capsub.data.repository.SettingsRepository(context) }
@@ -80,16 +83,42 @@ fun HomeScreen(
     var selectedTargetLang by remember { mutableStateOf(repo.targetLanguage) }
     var selectedTargetLangLabel by remember { mutableStateOf(repo.targetLanguageLabel) }
 
-    var selectedStyle by remember { mutableStateOf("Zhihu") }
-    var selectedStyleLabel by remember { mutableStateOf("🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)") }
+    var selectedStyle by remember { mutableStateOf(repo.selectedStyle) }
+    var selectedStyleLabel by remember {
+        mutableStateOf(
+            when (repo.selectedStyle) {
+                "custom" -> "✍️ Tự nhập Prompt tùy chỉnh..."
+                "ThuanViet" -> "📖 Thuần Việt Văn Học (Trau chuốt, mượt mà)"
+                "CoTrang" -> "⚔️ Cổ Trang Tiên Hiệp (Hán Việt chuẩn)"
+                "Auto" -> "✨ Tự Động AI (Theo ngữ cảnh)"
+                else -> "🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)"
+            }
+        )
+    }
+    var customPromptText by remember { mutableStateOf(repo.geminiCustomPrompt) }
 
-    var selectedEngine by remember { mutableStateOf("capcut") }
-    var selectedEngineLabel by remember { mutableStateOf("⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)") }
+    var selectedEngine by remember { mutableStateOf(repo.selectedModel) }
+    var selectedEngineLabel by remember {
+        mutableStateOf(
+            when (repo.selectedModel) {
+                "gemini-3.5-flash-lite" -> "🤖 Gemini 3.5 Flash-Lite (RPD cao - Cần API Key)"
+                "gemini-3.1-flash-lite" -> "🤖 Gemini 3.1 Flash-Lite (Khuyên dùng - Cần API Key)"
+                "none" -> "🚫 Giữ Nguyên Tiếng Gốc (Không dịch)"
+                else -> "⚡ CapCut Dịch Sẵn (Miễn phí 100% - Không cần Key)"
+            }
+        )
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {}
             selectedUri = uri
             // Lấy tên và kích thước file
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -281,13 +310,45 @@ fun HomeScreen(
                         "Zhihu" to "🎬 Phim Ngắn Zhihu (Vả mặt, kịch tính)",
                         "ThuanViet" to "📖 Thuần Việt Văn Học (Trau chuốt, mượt mà)",
                         "CoTrang" to "⚔️ Cổ Trang Tiên Hiệp (Hán Việt chuẩn)",
-                        "Auto" to "✨ Tự Động AI (Theo ngữ cảnh)"
+                        "Auto" to "✨ Tự Động AI (Theo ngữ cảnh)",
+                        "custom" to "✍️ Tự nhập Prompt tùy chỉnh..."
                     ),
                     onSelect = { code, label ->
                         selectedStyle = code
                         selectedStyleLabel = label
+                        repo.selectedStyle = code
                     }
                 )
+
+                if (selectedStyle == "custom") {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = customPromptText,
+                        onValueChange = {
+                            customPromptText = it
+                            repo.geminiCustomPrompt = it
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(100.dp),
+                        placeholder = {
+                            Text(
+                                "Nhập hướng dẫn prompt dịch cho Gemini (vd: Dịch theo lối cổ trang, xưng hô huynh/muội, giữ câu ngắn...)",
+                                color = Color.Gray,
+                                fontSize = 13.sp
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = DarkSurface,
+                            unfocusedContainerColor = DarkSurface,
+                            focusedBorderColor = PrimaryEmerald,
+                            unfocusedBorderColor = Color(0xFF333544),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(36.dp))
@@ -296,7 +357,17 @@ fun HomeScreen(
             Button(
                 onClick = {
                     val uri = selectedUri ?: return@Button
-                    onStartProcessing(uri, fileDurationMs, selectedLang, selectedTargetLang, selectedEngine, selectedStyle)
+                    val finalCustomPrompt = if (selectedStyle == "custom") customPromptText.trim() else ""
+                    onStartProcessing(
+                        uri,
+                        fileName.ifBlank { "Video_${System.currentTimeMillis()}" },
+                        fileDurationMs,
+                        selectedLang,
+                        selectedTargetLang,
+                        selectedEngine,
+                        selectedStyle,
+                        finalCustomPrompt
+                    )
                 },
                 enabled = selectedUri != null,
                 modifier = Modifier

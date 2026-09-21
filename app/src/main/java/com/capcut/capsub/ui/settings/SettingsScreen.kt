@@ -51,7 +51,6 @@ fun SettingsScreen(
     val repo = remember { SettingsRepository(context) }
 
     var keysText by remember { mutableStateOf(repo.geminiApiKeys.joinToString("\n")) }
-    var customPromptText by remember { mutableStateOf(repo.geminiCustomPrompt) }
     var threadCount by remember { mutableStateOf(repo.geminiThreadCount.toFloat()) }
     var fontSize by remember { mutableStateOf(repo.subtitleFontSizeSp) }
     var blackBoxOpacity by remember { mutableStateOf(repo.blackBoxOpacity) }
@@ -117,43 +116,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 2. PROMPT TÙY CHỈNH CHO GEMINI
-            Text(
-                text = "PROMPT TÙY CHỈNH CHO GEMINI (SYSTEM INSTRUCTION)",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = PrimaryEmerald,
-                letterSpacing = 1.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Thêm chỉ dẫn dịch riêng theo ý bạn (ví dụ: 'Dịch theo phong cách tiên hiệp huyền huyễn, xưng hô huynh/đệ, giữ nguyên tên riêng Cố tổng...').",
-                fontSize = 13.sp,
-                color = Color.Gray
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-
-            OutlinedTextField(
-                value = customPromptText,
-                onValueChange = { customPromptText = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(100.dp),
-                placeholder = { Text("Ví dụ: Dịch văn phong cổ trang, giữ chuẩn xưng hô huynh/muội/sư đồ...", color = Color.Gray) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = DarkSurface,
-                    unfocusedContainerColor = DarkSurface,
-                    focusedBorderColor = PrimaryEmerald,
-                    unfocusedBorderColor = Color(0xFF333544),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                shape = RoundedCornerShape(10.dp)
-            )
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // 3. SỐ LUỒNG DỊCH GEMINI (MULTI-THREADING)
+            // 2. SỐ LUỒNG DỊCH GEMINI (MULTI-THREADING)
             Text(
                 text = "SỐ LUỒNG DỊCH GEMINI ĐỒNG THỜI: ${threadCount.toInt()} LUỒNG",
                 fontSize = 13.sp,
@@ -174,7 +137,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 4. KÍCH THƯỚC CHỮ PHỤ ĐỀ
+            // 3. KÍCH THƯỚC CHỮ PHỤ ĐỀ
             Text(
                 text = "KÍCH THƯỚC PHỤ ĐỀ MẶC ĐỊNH: ${fontSize.toInt()} SP",
                 fontSize = 13.sp,
@@ -191,7 +154,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 5. ĐỘ ĐẬM HỘP ĐEN (BLACKBOX)
+            // 4. ĐỘ ĐẬM HỘP ĐEN (BLACKBOX)
             Text(
                 text = "ĐỘ MỜ HỘP ĐEN CHE SUB CỨNG: ${(blackBoxOpacity * 100).toInt()}%",
                 fontSize = 13.sp,
@@ -206,12 +169,11 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(30.dp))
 
-            // 6. LƯU CÀI ĐẶT
+            // 5. LƯU CÀI ĐẶT
             Button(
                 onClick = {
                     val keyList = keysText.split(",", ";", "\n").map { it.trim() }.filter { it.isNotBlank() }
                     repo.geminiApiKeys = keyList
-                    repo.geminiCustomPrompt = customPromptText.trim()
                     repo.geminiThreadCount = threadCount.toInt()
                     repo.subtitleFontSizeSp = fontSize
                     repo.blackBoxOpacity = blackBoxOpacity
