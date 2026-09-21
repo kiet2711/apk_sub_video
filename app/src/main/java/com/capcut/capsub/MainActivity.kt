@@ -207,6 +207,9 @@ class MainActivity : ComponentActivity() {
                                             onSubtitleLoaded = { doc ->
                                                 activeSubtitleDoc = doc
                                             },
+                                            onVideoSelected = { uri ->
+                                                activeVideoUri = uri
+                                            },
                                             onNavigateToPlayer = { uri, doc ->
                                                 activeVideoUri = uri ?: activeVideoUri
                                                 activeSubtitleDoc = doc
@@ -216,14 +219,20 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                     else -> {
-                                        HistoryScreen(
-                                            onNavigateToSettings = { currentScreen = "settings" },
-                                            onPlayHistoryItem = { uri, doc ->
-                                                activeVideoUri = uri
-                                                activeSubtitleDoc = doc
-                                                currentScreen = "player"
-                                            }
-                                        )
+                                         HistoryScreen(
+                                             onNavigateToSettings = { currentScreen = "settings" },
+                                             onPlayHistoryItem = { uri, doc ->
+                                                 activeVideoUri = uri
+                                                 activeSubtitleDoc = doc
+                                                 currentScreen = "player"
+                                             },
+                                             onOpenInTts = { uri, doc ->
+                                                 activeVideoUri = uri
+                                                 activeSubtitleDoc = doc
+                                                 selectedTab = 1
+                                                 currentScreen = "main"
+                                             }
+                                         )
                                     }
                                 }
 

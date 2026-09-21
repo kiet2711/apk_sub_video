@@ -22,20 +22,24 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Input
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Input
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,7 +72,8 @@ import java.util.Locale
 @Composable
 fun HistoryScreen(
     onNavigateToSettings: () -> Unit,
-    onPlayHistoryItem: (Uri, SubtitleDocument) -> Unit
+    onPlayHistoryItem: (Uri, SubtitleDocument) -> Unit,
+    onOpenInTts: ((Uri, SubtitleDocument) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val historyRepo = remember { HistoryRepository(context) }
@@ -157,7 +162,7 @@ fun HistoryScreen(
                             .background(PrimaryEmerald.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Input, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(26.dp))
+                        Icon(Icons.AutoMirrored.Filled.Input, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(26.dp))
                     }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -228,6 +233,12 @@ fun HistoryScreen(
                                 val doc = historyRepo.loadSubtitleDocument(item)
                                 onPlayHistoryItem(Uri.parse(item.videoUri), doc)
                             },
+                            onOpenInTts = if (onOpenInTts != null) {
+                                {
+                                    val doc = historyRepo.loadSubtitleDocument(item)
+                                    onOpenInTts(Uri.parse(item.videoUri), doc)
+                                }
+                            } else null,
                             onExportSrt = {
                                 exportingItem = item
                                 exportSrtLauncher.launch("${item.videoName.substringBeforeLast(".")}.srt")
@@ -258,6 +269,7 @@ fun HistoryScreen(
 private fun HistoryCard(
     item: HistoryItem,
     onPlay: () -> Unit,
+    onOpenInTts: (() -> Unit)? = null,
     onExportSrt: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -308,11 +320,32 @@ private fun HistoryCard(
                     colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF1E2029), labelColor = PrimaryEmerald)
                 )
 
-                AssistChip(
-                    onClick = {},
-                    label = { Text(item.translationEngine.take(18), fontSize = 11.sp) },
-                    colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF1E2029), labelColor = Color.LightGray)
-                )
+                val voiceDisplayName = remember(item.ttsVoice) {
+                    if (!item.ttsVoice.isNullOrBlank()) {
+                        com.capcut.capsub.data.model.VoicePresets.VIETNAMESE_VOICES
+                            .find { it.voiceType == item.ttsVoice }?.displayName ?: item.ttsVoice
+                    } else null
+                }
+
+                if (voiceDisplayName != null) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("🎤 $voiceDisplayName", fontSize = 11.sp) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = Color(0xFF132F24),
+                            labelColor = PrimaryEmerald
+                        )
+                    )
+                } else {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Chưa lồng tiếng", fontSize = 11.sp) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = Color(0xFF252631),
+                            labelColor = Color.Gray
+                        )
+                    )
+                }
 
                 Text(dateStr, color = Color.Gray, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
             }
@@ -325,14 +358,29 @@ private fun HistoryCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ElevatedButton(
-                    onClick = onPlay,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(36.dp)
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Xem Video", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ElevatedButton(
+                        onClick = onPlay,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Xem Video", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    if (onOpenInTts != null) {
+                        OutlinedButton(
+                            onClick = onOpenInTts,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(36.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (item.ttsVoice != null) "Đổi giọng" else "Lồng tiếng", fontSize = 12.sp)
+                        }
+                    }
                 }
 
                 IconButton(onClick = onExportSrt) {
