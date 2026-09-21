@@ -64,9 +64,6 @@ class MainActivity : ComponentActivity() {
                 var currentScreen by remember { mutableStateOf("main") } // "main", "settings", "player"
                 var selectedTab by remember { mutableStateOf(0) } // 0: Studio (Tạo Phụ Đề), 1: Lịch Sử & Player
                 var activeVideoUri by remember { mutableStateOf<Uri?>(null) }
-                var activeVideoName by remember { mutableStateOf("") }
-                var activeVideoDurationMs by remember { mutableStateOf(0L) }
-                var activeSourceLang by remember { mutableStateOf("zh-CN") }
                 var activeSubtitleDoc by remember { mutableStateOf<SubtitleDocument?>(null) }
                 var showProgressSheet by remember { mutableStateOf(false) }
                 var lastHandledJobDocId by remember { mutableStateOf<Int?>(null) }
@@ -79,23 +76,6 @@ class MainActivity : ComponentActivity() {
                             lastHandledJobDocId = docId
                             val doc = progress.resultDocument!!
                             activeSubtitleDoc = doc
-
-                            // Đảm bảo lưu lịch sử tức thì
-                            try {
-                                val historyRepo = com.capcut.capsub.data.repository.HistoryRepository(this@MainActivity)
-                                val vUri = activeVideoUri!!
-                                val vName = activeVideoName.ifBlank { "Video_${System.currentTimeMillis()}" }
-                                historyRepo.saveHistory(
-                                    videoUri = vUri,
-                                    videoName = vName,
-                                    durationMs = activeVideoDurationMs,
-                                    document = doc,
-                                    translationEngine = repo.selectedModel,
-                                    sourceLanguage = activeSourceLang
-                                )
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainActivity", "Failed to auto-save history: ${e.message}", e)
-                            }
 
                             showProgressSheet = false
                             selectedTab = 1
@@ -177,9 +157,6 @@ class MainActivity : ComponentActivity() {
                                             }
 
                                             activeVideoUri = uri
-                                            activeVideoName = name
-                                            activeVideoDurationMs = durationMs
-                                            activeSourceLang = sourceLang
 
                                             showProgressSheet = true
                                             repo.selectedModel = model

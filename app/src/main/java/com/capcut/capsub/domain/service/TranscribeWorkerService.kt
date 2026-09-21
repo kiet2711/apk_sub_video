@@ -23,6 +23,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -77,11 +78,14 @@ class TranscribeWorkerService : Service() {
         currentPipeline = pipeline
 
         serviceScope.launch {
-            launch {
+            val progressJob = launch {
                 pipeline.progressFlow.collect { progress ->
-                    _sharedProgressFlow.value = progress
-                    val pct = (progress.progress * 100).toInt()
-                    updateNotification(progress.message, pct)
+                    // COMPLETED chỉ được phát ra cho UI sau khi lịch sử đã ghi thành công.
+                    if (progress.stage != ProcessStage.COMPLETED) {
+                        _sharedProgressFlow.value = progress
+                        val pct = (progress.progress * 100).toInt()
+                        updateNotification(progress.message, pct)
+                    }
                 }
             }
 
@@ -93,10 +97,12 @@ class TranscribeWorkerService : Service() {
                     sourceLanguage = sourceLang,
                     outputSrtFile = outSrtFile
                 )
-                try {
+                withContext(Dispatchers.IO) {
                     val historyRepo = com.capcut.capsub.data.repository.HistoryRepository(applicationContext)
                     val vUri = Uri.parse(videoUriStr)
-                    val vName = videoNameExtra ?: getFileName(applicationContext, vUri) ?: "Video_${System.currentTimeMillis()}"
+                    val vName = videoNameExtra?.takeIf { it.isNotBlank() }
+                        ?: getFileName(applicationContext, vUri)
+                        ?: "Video_${System.currentTimeMillis()}"
                     historyRepo.saveHistory(
                         videoUri = vUri,
                         videoName = vName,
@@ -105,13 +111,33 @@ class TranscribeWorkerService : Service() {
                         translationEngine = repo.selectedModel,
                         sourceLanguage = sourceLang
                     )
-                } catch (e: Exception) {
-                    android.util.Log.e("CapSubWorker", "Failed to save history: ${e.message}", e)
                 }
+
+                val completed = ProcessProgress(
+                    stage = ProcessStage.COMPLETED,
+                    progress = 1.0f,
+                    message = "Hoàn tất! Đã lưu ${resultDoc.size} câu phụ đề vào lịch sử.",
+                    resultDocument = resultDoc
+                )
+                _sharedProgressFlow.value = completed
+                updateNotification(completed.message, 100)
             } catch (e: Exception) {
-                // Handled in pipeline
+                val pipelineState = pipeline.progressFlow.value
+                val terminalState = if (pipelineState.stage == ProcessStage.COMPLETED) {
+                    ProcessProgress(
+                        stage = ProcessStage.ERROR,
+                        message = "Đã tạo phụ đề nhưng không thể lưu lịch sử: ${e.message}",
+                        error = e
+                    )
+                } else {
+                    pipelineState
+                }
+                _sharedProgressFlow.value = terminalState
+                updateNotification(terminalState.message, (terminalState.progress * 100).toInt())
+                android.util.Log.e("CapSubWorker", terminalState.message, e)
             } finally {
-                stopSelf()
+                progressJob.cancel()
+                stopSelf(startId)
             }
         }
 
