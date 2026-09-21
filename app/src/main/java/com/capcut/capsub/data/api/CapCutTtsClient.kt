@@ -93,6 +93,7 @@ class CapCutTtsClient(
                     partFile.copyTo(destFile, overwrite = true)
                     partFile.delete()
                 }
+                AudioFileValidator.invalidate(destFile)
                 return@withContext destFile
             } catch (e: Exception) {
                 lastException = e

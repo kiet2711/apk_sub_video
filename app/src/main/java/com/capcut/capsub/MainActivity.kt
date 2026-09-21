@@ -98,10 +98,14 @@ class MainActivity : ComponentActivity() {
                                 videoUri = videoUri,
                                 subtitleDoc = doc,
                                 onBack = {
+                                    activeSubtitleDoc = null
+                                    activeVideoUri = null
                                     currentScreen = "main"
                                 }
                             )
                         } else {
+                            activeSubtitleDoc = null
+                            activeVideoUri = null
                             currentScreen = "main"
                         }
                     }

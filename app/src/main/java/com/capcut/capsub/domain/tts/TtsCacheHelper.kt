@@ -27,7 +27,17 @@ object TtsCacheHelper {
         if (doc.items.isEmpty()) return "empty"
         val first = doc.items.first()
         val last = doc.items.last()
-        // Tạo khóa định danh ổn định không phụ thuộc vào trạng thái audioFilePath
+        // Dùng text hiển thị/dịch (text mà TTS đọc) để đảm bảo đồng nhất giữa RAM và khi nạp lại từ SRT
+        val firstText = first.getDisplayText("translated").ifBlank { first.originalText }.trim()
+        val lastText = last.getDisplayText("translated").ifBlank { last.originalText }.trim()
+        val signature = "${doc.items.size}_${first.startMs}_${firstText.take(20)}_${last.endMs}_${lastText.take(20)}"
+        return CapCutSigner.md5(signature)
+    }
+
+    fun getLegacyDocKey(doc: SubtitleDocument): String {
+        if (doc.items.isEmpty()) return "empty"
+        val first = doc.items.first()
+        val last = doc.items.last()
         val signature = "${doc.items.size}_${first.startMs}_${first.originalText.take(15)}_${last.endMs}_${last.originalText.take(15)}"
         return CapCutSigner.md5(signature)
     }
@@ -47,6 +57,26 @@ object TtsCacheHelper {
         val dir = getCacheDir(context, doc, voiceType)
         if (dir.exists()) {
             dir.listFiles()?.forEach { it.delete() }
+        }
+    }
+
+    /**
+     * Xoá toàn bộ file âm thanh trong cache của tài liệu này (bao gồm cả thư mục mã mới lẫn mã legacy).
+     */
+    fun deleteDocCache(context: Context, doc: SubtitleDocument, explicitDocKey: String? = null) {
+        val keysToDelete = mutableSetOf<String>()
+        val key = getDocKey(doc)
+        if (key.isNotBlank() && key != "empty") keysToDelete += key
+        val legacyKey = getLegacyDocKey(doc)
+        if (legacyKey.isNotBlank() && legacyKey != "empty") keysToDelete += legacyKey
+        if (!explicitDocKey.isNullOrBlank() && explicitDocKey != "empty") keysToDelete += explicitDocKey
+
+        keysToDelete.forEach { k ->
+            val dir = File(context.filesDir, "tts_cache/$k")
+            if (dir.exists()) {
+                val deleted = dir.deleteRecursively()
+                Log.d(TAG, "Đã xoá thư mục cache tts_cache/$k: $deleted")
+            }
         }
     }
 
@@ -71,7 +101,20 @@ object TtsCacheHelper {
         doc.reindex()
 
         val docKey = getDocKey(doc)
-        val docDir = File(context.filesDir, "tts_cache/$docKey")
+        var docDir = File(context.filesDir, "tts_cache/$docKey")
+        if (!docDir.exists()) {
+            val legacyKey = getLegacyDocKey(doc)
+            val legacyDir = File(context.filesDir, "tts_cache/$legacyKey")
+            if (legacyDir.exists() && legacyDir.isDirectory) {
+                // Tự động nhận diện cache lưu theo mã cũ và đổi tên hoặc dùng tiếp
+                if (legacyDir.renameTo(docDir)) {
+                    Log.d(TAG, "Đã di chuyển cache cũ sang định danh mới: $docKey")
+                } else {
+                    docDir = legacyDir
+                }
+            }
+        }
+
         if (!docDir.exists()) {
             doc.items.forEach { it.audioFilePath = null; it.audioDurationMs = 0L }
             return CacheAudit(

@@ -111,8 +111,13 @@ fun VideoPlayerScreen(
     var aiVolume by remember { mutableStateOf(repo.aiAudioVolume) }
     var showVolumeSheet by remember { mutableStateOf(false) }
 
-    DisposableEffect(videoUri) {
-        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, repo.selectedTtsVoice)
+    val historyItem = remember(videoUri) {
+        historyRepo.getHistoryList().firstOrNull { it.videoUri == videoUri.toString() }
+    }
+    val effectiveVoice = historyItem?.ttsVoice ?: repo.selectedTtsVoice
+
+    DisposableEffect(videoUri, effectiveVoice) {
+        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, effectiveVoice)
         playerManager.initialize(videoUri, originalVolume)
         playerManager.ttsAudioScheduler.setSubtitleDocument(subtitleDoc)
         playerManager.ttsAudioScheduler.setAiVolume(aiVolume)
@@ -123,9 +128,11 @@ fun VideoPlayerScreen(
 
     var subtitleDocVersion by remember { mutableStateOf(0) }
 
-    androidx.compose.runtime.LaunchedEffect(subtitleDoc, subtitleDocVersion) {
-        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, repo.selectedTtsVoice)
-        playerManager.ttsAudioScheduler.setSubtitleDocument(subtitleDoc)
+    androidx.compose.runtime.LaunchedEffect(subtitleDocVersion) {
+        if (subtitleDocVersion > 0) {
+            com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, subtitleDoc, effectiveVoice)
+            playerManager.ttsAudioScheduler.setSubtitleDocument(subtitleDoc)
+        }
     }
 
     val currentPositionMs by playerManager.currentPositionMs.collectAsState()

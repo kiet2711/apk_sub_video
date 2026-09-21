@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -62,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -91,13 +93,11 @@ fun TtsStudioScreen(
 
     val historyRepo = remember { com.capcut.capsub.data.repository.HistoryRepository(context) }
     var effectiveVideoUri by remember(currentVideoUri) {
-        val uri = currentVideoUri ?: historyRepo.getHistoryList().firstOrNull()?.let { Uri.parse(it.videoUri) }
-        mutableStateOf(uri)
+        mutableStateOf(currentVideoUri)
     }
 
     var activeDoc by remember(currentSubtitleDoc) {
-        val doc = currentSubtitleDoc ?: historyRepo.getHistoryList().firstOrNull()?.let { historyRepo.loadSubtitleDocument(it) }
-        mutableStateOf(doc)
+        mutableStateOf(currentSubtitleDoc)
     }
 
     var selectedVoice by remember {
@@ -242,7 +242,7 @@ fun TtsStudioScreen(
                                     modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Column {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "Đã sẵn sàng: ${doc.items.size} câu phụ đề",
                                         fontWeight = FontWeight.SemiBold,
@@ -256,13 +256,50 @@ fun TtsStudioScreen(
                                         fontSize = 12.sp
                                     )
                                 }
+                                IconButton(
+                                    onClick = {
+                                        activeDoc = null
+                                        effectiveVideoUri = null
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Bỏ chọn phụ đề này",
+                                        tint = Color.Gray,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         } else {
-                            Text(
-                                text = "Chưa có phụ đề. Hãy bấm 'Nạp SRT ngoài' hoặc dịch phụ đề từ Tab 1.",
-                                color = Color.Gray,
-                                fontSize = 13.sp
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1F2029), RoundedCornerShape(10.dp))
+                                    .padding(vertical = 20.dp, horizontal = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Subtitles,
+                                    contentDescription = null,
+                                    tint = Color.DarkGray,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Chưa có phụ đề để lồng tiếng",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Tạo phụ đề từ Tab 'Tạo Phụ Đề' hoặc bấm 'Nạp SRT ngoài' ở trên",
+                                    color = Color.Gray,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
                     }
                 }
@@ -515,7 +552,7 @@ fun TtsStudioScreen(
                                         forceRegenerate = isFullyCompleted,
                                         onCompleted = {
                                             com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, doc, selectedVoice.voiceType)
-                                            effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc) }
+                                            effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc, selectedVoice.voiceType) }
                                         }
                                     )
                                 },
@@ -595,7 +632,7 @@ fun TtsStudioScreen(
                             doc,
                             selectedVoice.voiceType
                         )
-                        effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc) }
+                        effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc, selectedVoice.voiceType) }
                     }
                 )
             },
@@ -613,7 +650,7 @@ fun TtsStudioScreen(
                             doc,
                             selectedVoice.voiceType
                         )
-                        effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc) }
+                        effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc, selectedVoice.voiceType) }
                     }
                 )
             },

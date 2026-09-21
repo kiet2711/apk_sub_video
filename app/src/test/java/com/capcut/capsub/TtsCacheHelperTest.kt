@@ -42,4 +42,34 @@ class TtsCacheHelperTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun docKeyIsIdenticalBetweenRamDocumentAndSrtParsedDocument() {
+        val ramDoc = com.capcut.capsub.data.model.SubtitleDocument(
+            mutableListOf(
+                com.capcut.capsub.data.model.SubtitleItem(
+                    id = 1,
+                    startMs = 1000,
+                    endMs = 3000,
+                    originalText = "哈喽大家好",
+                    translatedText = "Xin chào các bạn"
+                ),
+                com.capcut.capsub.data.model.SubtitleItem(
+                    id = 2,
+                    startMs = 3200,
+                    endMs = 5000,
+                    originalText = "再见",
+                    translatedText = "Tạm biệt nhé"
+                )
+            )
+        )
+
+        val srtContent = ramDoc.toSrtString(mode = "translated")
+        val srtDoc = com.capcut.capsub.data.model.SubtitleDocument.parseSrt(srtContent)
+
+        val keyFromRam = TtsCacheHelper.getDocKey(ramDoc)
+        val keyFromSrt = TtsCacheHelper.getDocKey(srtDoc)
+
+        assertEquals("Khóa docKey giữa RAM và khi nạp lại từ SRT phải trùng nhau!", keyFromRam, keyFromSrt)
+    }
 }

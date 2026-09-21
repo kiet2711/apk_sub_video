@@ -12,5 +12,7 @@ data class HistoryItem(
     val sentenceCount: Int,
     val translationEngine: String,
     val sourceLanguage: String = "zh-CN",
+    val ttsVoice: String? = null,
+    val docKey: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )

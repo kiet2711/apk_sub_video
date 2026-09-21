@@ -100,9 +100,7 @@ class TtsAudioScheduler(private val context: Context) {
         subtitleDoc = doc
         stop()
         resetPlaybackState()
-        val countWithAudio = doc?.items?.count { item ->
-            item.audioFilePath?.let { AudioFileValidator.validate(File(it)).isValid } == true
-        } ?: 0
+        val countWithAudio = doc?.items?.count { !it.audioFilePath.isNullOrBlank() } ?: 0
         Log.d(TAG, "setSubtitleDocument: total ${doc?.size ?: 0}, audio hợp lệ: $countWithAudio")
     }
 
@@ -143,16 +141,27 @@ class TtsAudioScheduler(private val context: Context) {
 
         val path = item.audioFilePath ?: return
         val file = File(path)
-        val validation = AudioFileValidator.validate(file)
-        if (!validation.isValid) {
-            Log.w(TAG, "Bỏ qua câu #${item.id}: ${validation.reason}")
+        if (!file.exists()) {
             item.audioFilePath = null
             return
         }
 
+        val durationMs = if (item.audioDurationMs > 0L) {
+            item.audioDurationMs
+        } else {
+            val validation = AudioFileValidator.validate(file)
+            if (!validation.isValid) {
+                Log.w(TAG, "Bỏ qua câu #${item.id}: ${validation.reason}")
+                item.audioFilePath = null
+                return
+            }
+            item.audioDurationMs = validation.durationMs
+            validation.durationMs
+        }
+
         val timelineOffsetMs = (positionMs - item.startMs).coerceAtLeast(0L)
         val sourceOffsetMs = (timelineOffsetMs * item.playbackSpeed).toLong()
-        if (sourceOffsetMs >= validation.durationMs) {
+        if (sourceOffsetMs >= durationMs) {
             lastPlayedItemId = item.id
             return
         }

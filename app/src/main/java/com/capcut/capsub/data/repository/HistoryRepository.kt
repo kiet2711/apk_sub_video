@@ -65,6 +65,7 @@ class HistoryRepository(private val context: Context) {
         val srtFile = if (existing != null) File(existing.srtFilePath) else File(subtitlesDir, "sub_$id.srt")
         document.saveToFile(srtFile, mode = "translated")
 
+        val docKey = com.capcut.capsub.domain.tts.TtsCacheHelper.getDocKey(document)
         val item = HistoryItem(
             id = id,
             videoUri = videoUri.toString(),
@@ -74,6 +75,8 @@ class HistoryRepository(private val context: Context) {
             sentenceCount = document.size,
             translationEngine = translationEngine,
             sourceLanguage = sourceLanguage,
+            ttsVoice = existing?.ttsVoice,
+            docKey = docKey,
             createdAt = System.currentTimeMillis()
         )
 
@@ -87,6 +90,25 @@ class HistoryRepository(private val context: Context) {
     fun deleteHistory(id: String): Boolean = synchronized(fileLock) {
         val currentList = getHistoryList().toMutableList()
         val item = currentList.firstOrNull { it.id == id } ?: return@synchronized false
+
+        // 1. Dọn dẹp cache audio MP3 tương ứng
+        try {
+            val srtFile = File(item.srtFilePath)
+            val doc = if (srtFile.exists()) {
+                try {
+                    SubtitleDocument.parseSrt(srtFile.readText(Charsets.UTF_8))
+                } catch (e: Exception) {
+                    SubtitleDocument()
+                }
+            } else {
+                SubtitleDocument()
+            }
+            com.capcut.capsub.domain.tts.TtsCacheHelper.deleteDocCache(context, doc, explicitDocKey = item.docKey)
+        } catch (e: Exception) {
+            Log.w(TAG, "Lỗi khi xoá audio cache của video ${item.videoName}", e)
+        }
+
+        // 2. Xoá file phụ đề SRT
         try {
             File(item.srtFilePath).delete()
         } catch (e: Exception) {
@@ -103,18 +125,25 @@ class HistoryRepository(private val context: Context) {
         if (!srtFile.exists()) return SubtitleDocument()
         val content = srtFile.readText(Charsets.UTF_8)
         val doc = SubtitleDocument.parseSrt(content)
-        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, doc)
+        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, doc, item.ttsVoice)
         return doc
     }
 
-    fun updateSubtitleForUri(videoUri: Uri, document: SubtitleDocument) = synchronized(fileLock) {
+    fun updateSubtitleForUri(
+        videoUri: Uri,
+        document: SubtitleDocument,
+        voiceType: String? = null
+    ) = synchronized(fileLock) {
         val list = getHistoryList().toMutableList()
         val item = list.firstOrNull { it.videoUri == videoUri.toString() } ?: return@synchronized
         try {
             val srtFile = File(item.srtFilePath)
             document.saveToFile(srtFile, mode = "translated")
+            val computedDocKey = com.capcut.capsub.domain.tts.TtsCacheHelper.getDocKey(document)
             val updated = item.copy(
                 sentenceCount = document.size,
+                ttsVoice = voiceType ?: item.ttsVoice,
+                docKey = computedDocKey,
                 createdAt = System.currentTimeMillis()
             )
             val idx = list.indexOfFirst { it.id == item.id }

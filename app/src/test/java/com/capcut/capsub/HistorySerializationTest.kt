@@ -23,6 +23,8 @@ class HistorySerializationTest {
                 sentenceCount = 10,
                 translationEngine = "capcut",
                 sourceLanguage = "zh-CN",
+                ttsVoice = "ICL_uranus_vi_female_yuenan1",
+                docKey = "abc123md5",
                 createdAt = 123L
             )
         )
@@ -31,5 +33,30 @@ class HistorySerializationTest {
         val decoded = json.decodeFromString<List<HistoryItem>>(encoded)
 
         assertEquals(expected, decoded)
+    }
+
+    @Test
+    fun legacyHistoryJsonWithoutTtsVoiceAndDocKeyCanBeLoaded() {
+        val legacyJson = """
+            [
+              {
+                "id": "history-legacy",
+                "videoUri": "content://media/video/2",
+                "videoName": "legacy.mp4",
+                "durationMs": 5000,
+                "srtFilePath": "/path/sub.srt",
+                "sentenceCount": 5,
+                "translationEngine": "gemini-1.5-flash",
+                "sourceLanguage": "zh-CN",
+                "createdAt": 1000
+              }
+            ]
+        """.trimIndent()
+
+        val decoded = json.decodeFromString<List<HistoryItem>>(legacyJson)
+        assertEquals(1, decoded.size)
+        assertEquals("history-legacy", decoded[0].id)
+        assertEquals(null, decoded[0].ttsVoice)
+        assertEquals(null, decoded[0].docKey)
     }
 }
