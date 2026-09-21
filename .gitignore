@@ -1,0 +1,21 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+app/build/
+captures/
+.externalNativeBuild
+.cxx
+
+# Build outputs
+*.apk
+*.aab
+
+# Scratch / Test screenshots & temporary test files
+screen_*.png
+*.log
+sample.srt
+clean_history.json
+history.json
