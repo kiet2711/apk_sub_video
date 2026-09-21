@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Warning
@@ -165,9 +167,26 @@ fun TtsStudioScreen(
         val savedVoiceId = repo.selectedTtsVoice
         mutableStateOf(VoicePresets.VIETNAMESE_VOICES.find { it.voiceType == savedVoiceId } ?: VoicePresets.DEFAULT_VOICE)
     }
+
+    val voiceListState = rememberLazyListState()
+    val sortedVoices = remember(selectedVoice) {
+        val list = VoicePresets.VIETNAMESE_VOICES.toMutableList()
+        val idx = list.indexOfFirst { it.voiceType == selectedVoice.voiceType }
+        if (idx > 0) {
+            val item = list.removeAt(idx)
+            list.add(0, item)
+        }
+        list
+    }
+
+    androidx.compose.runtime.LaunchedEffect(selectedVoice.voiceType) {
+        voiceListState.animateScrollToItem(0)
+    }
+
     var threadCount by remember { mutableIntStateOf(repo.ttsThreadCount) }
     var showErrorReview by remember { mutableStateOf(false) }
     var showHistoryPicker by remember { mutableStateOf(false) }
+    var showTranslateDialog by remember { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(progress.failedItems, progress.isRunning) {
         if (!progress.isRunning && progress.failedItems.isNotEmpty()) {
@@ -446,6 +465,29 @@ fun TtsStudioScreen(
                                     )
                                 }
                             }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { showTranslateDialog = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF64B5F6))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Translate,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Dịch phụ đề bằng Gemini AI",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         } else {
                             Column(
                                 modifier = Modifier
@@ -488,19 +530,40 @@ fun TtsStudioScreen(
                     colors = CardDefaults.cardColors(containerColor = DarkCard)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "2. Chọn Giọng Đọc CapCut (${VoicePresets.VIETNAMESE_VOICES.size} giọng)",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "2. Chọn Giọng Đọc CapCut",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .background(PrimaryEmerald.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = "🎤 ${selectedVoice.displayName}",
+                                    color = PrimaryEmerald,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         LazyRow(
+                            state = voiceListState,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            items(VoicePresets.VIETNAMESE_VOICES) { voice ->
+                            items(sortedVoices, key = { it.voiceType }) { voice ->
                                 val isSelected = voice.voiceType == selectedVoice.voiceType
                                 Box(
                                     modifier = Modifier
@@ -518,16 +581,28 @@ fun TtsStudioScreen(
                                         .padding(horizontal = 14.dp, vertical = 10.dp)
                                 ) {
                                     Column {
-                                        Text(
-                                            text = voice.displayName,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) PrimaryEmerald else Color.White,
-                                            fontSize = 13.sp
-                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = voice.displayName,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSelected) PrimaryEmerald else Color.White,
+                                                fontSize = 13.sp
+                                            )
+                                            if (isSelected) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = null,
+                                                    tint = PrimaryEmerald,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
                                         if (voice.description.isNotBlank()) {
+                                            Spacer(modifier = Modifier.height(2.dp))
                                             Text(
                                                 text = voice.description,
-                                                color = Color.Gray,
+                                                color = if (isSelected) PrimaryEmerald.copy(alpha = 0.8f) else Color.Gray,
                                                 fontSize = 11.sp
                                             )
                                         }
@@ -1040,6 +1115,28 @@ fun TtsStudioScreen(
             },
             containerColor = DarkCard
         )
+    }
+
+    if (showTranslateDialog) {
+        activeDoc?.let { doc ->
+            GeminiTranslateSubtitleDialog(
+                subtitleDoc = doc,
+                onDismiss = { showTranslateDialog = false },
+                onNavigateToSettings = onNavigateToSettings,
+                onTranslationCompleted = { translatedDoc ->
+                    activeDoc = translatedDoc
+                    onSubtitleLoaded(translatedDoc)
+                    com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(
+                        context,
+                        translatedDoc,
+                        selectedVoice.voiceType
+                    )
+                    effectiveVideoUri?.let { uri ->
+                        historyRepo.updateSubtitleForUri(uri, translatedDoc, selectedVoice.voiceType)
+                    }
+                }
+            )
+        }
     }
 }
 
