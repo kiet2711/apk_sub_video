@@ -97,8 +97,11 @@ object TtsCacheHelper {
         doc: SubtitleDocument,
         preferredVoiceType: String? = null
     ): CacheAudit {
-        if (doc.items.isEmpty()) return CacheAudit(0, emptyList(), null)
-        doc.reindex()
+        val snapshot = synchronized(doc) {
+            if (doc.items.isEmpty()) return CacheAudit(0, emptyList(), null)
+            doc.reindex()
+            doc.items.toList()
+        }
 
         val docKey = getDocKey(doc)
         var docDir = File(context.filesDir, "tts_cache/$docKey")
@@ -116,10 +119,10 @@ object TtsCacheHelper {
         }
 
         if (!docDir.exists()) {
-            doc.items.forEach { it.audioFilePath = null; it.audioDurationMs = 0L }
+            snapshot.forEach { it.audioFilePath = null; it.audioDurationMs = 0L }
             return CacheAudit(
                 linkedCount = 0,
-                issues = doc.items.map { item ->
+                issues = snapshot.map { item ->
                     CacheIssue(item.id, item.getDisplayText(), "Chưa có file âm thanh", "")
                 },
                 targetDir = null
@@ -131,7 +134,7 @@ object TtsCacheHelper {
 
         var linkedCount = 0
         val issues = mutableListOf<CacheIssue>()
-        doc.items.forEach { item ->
+        snapshot.forEach { item ->
             val file = File(targetDir, "sub_${item.id}.mp3")
             val validation = AudioFileValidator.validate(file)
             if (validation.isValid) {
@@ -149,11 +152,13 @@ object TtsCacheHelper {
                 item.audioFilePath = null
                 item.audioDurationMs = 0L
                 item.playbackSpeed = 1.0f
-                issues += CacheIssue(
-                    itemId = item.id,
-                    text = item.getDisplayText(),
-                    reason = validation.reason,
-                    filePath = file.absolutePath
+                issues.add(
+                    CacheIssue(
+                        itemId = item.id,
+                        text = item.getDisplayText(),
+                        reason = validation.reason,
+                        filePath = file.absolutePath
+                    )
                 )
             }
         }

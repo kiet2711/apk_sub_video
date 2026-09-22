@@ -10,18 +10,19 @@ import com.capcut.capsub.data.model.VoiceItem
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 data class TtsFailedItem(
     val itemId: Int,
@@ -148,24 +149,39 @@ class TtsGenerationManager(private val context: Context) {
 
         activeJob = scope.launch {
             val cacheDir = TtsCacheHelper.getCacheDir(context, subtitleDoc, voice.voiceType)
-            val semaphore = Semaphore(effectiveThreads)
             val processedCounter = AtomicInteger(0)
             val successCounter = AtomicInteger(0)
             val failureReasons = ConcurrentHashMap<Int, String>()
             val startTimeMs = System.currentTimeMillis()
+            val lastProgressUpdateMs = AtomicLong(0L)
 
-            val jobs = items.mapIndexed { index, item ->
+            // Hàng đợi phân phối câu thoại theo mô hình Worker Pool (tránh tràn RAM)
+            val channel = Channel<SubtitleItem>(capacity = effectiveThreads * 2)
+
+            // Producer nạp các câu thoại vào hàng đợi
+            val producer = launch {
+                for (item in items) {
+                    if (_progress.value.isCancelled) break
+                    channel.send(item)
+                }
+                channel.close()
+            }
+
+            // Tạo đúng effectiveThreads Worker xử lý song song
+            val workers = (0 until effectiveThreads).map { workerIdx ->
                 launch {
-                    delay((index % 10) * 75L)
-                    semaphore.withPermit {
-                        if (_progress.value.isCancelled) return@withPermit
+                    val client = CapCutTtsClient(device = DeviceConfig().randomize())
+                    // Khởi động so le nhẹ để tránh nghẽn kết nối trong cùng 1 mili-giây
+                    delay(workerIdx * 15L)
+
+                    for (item in channel) {
+                        if (_progress.value.isCancelled) break
                         val text = textFor(item, subMode)
                         val destFile = File(cacheDir, "sub_${item.id}.mp3")
 
                         try {
                             val currentValidation = AudioFileValidator.validate(destFile)
                             if (forceRegenerate || !currentValidation.isValid) {
-                                val client = CapCutTtsClient(DeviceConfig().randomize())
                                 client.generateSpeechToFile(
                                     text = text,
                                     voiceType = voice.voiceType,
@@ -187,26 +203,35 @@ class TtsGenerationManager(private val context: Context) {
                             Log.e("TtsGenerationManager", "Lỗi câu #${item.id} ('${text.take(30)}'): $reason", error)
                         } finally {
                             val processed = processedCounter.incrementAndGet()
-                            val elapsedSec = (System.currentTimeMillis() - startTimeMs) / 1000f
-                            val speed = if (elapsedSec > 0.5f) processed / elapsedSec else 0f
-                            val failed = processed - successCounter.get()
-                            _progress.update { state ->
-                                state.copy(
-                                    completedCount = processed,
-                                    speedPerSec = speed,
-                                    currentSentence = if (failed > 0) {
-                                        "Đã xử lý $processed/$total câu ($failed câu đang lỗi)"
-                                    } else {
-                                        "Đã xử lý $processed/$total: ${text.take(35)}"
-                                    }
-                                )
+                            val now = System.currentTimeMillis()
+                            val lastUpdate = lastProgressUpdateMs.get()
+
+                            // Tiết chế nhịp cập nhật giao diện (throttled ~200ms) để không làm đơ Compose UI
+                            if (now - lastUpdate >= 200L || processed == total) {
+                                lastProgressUpdateMs.set(now)
+                                val elapsedSec = (now - startTimeMs) / 1000f
+                                val speed = if (elapsedSec > 0.5f) processed / elapsedSec else 0f
+                                val failed = processed - successCounter.get()
+                                _progress.update { state ->
+                                    state.copy(
+                                        completedCount = processed,
+                                        speedPerSec = speed,
+                                        currentSentence = if (failed > 0) {
+                                            "Đã xử lý $processed/$total câu ($failed câu đang lỗi)"
+                                        } else {
+                                            "Đã xử lý $processed/$total: ${text.take(35)}"
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
 
-            jobs.forEach { it.join() }
+            producer.join()
+            workers.joinAll()
+
             if (!_progress.value.isCancelled) {
                 finishFromAudit(subtitleDoc, voice, subMode, failureReasons, onCompleted)
             }

@@ -45,11 +45,22 @@ class CapCutTtsException(
  */
 class CapCutTtsClient(
     val device: DeviceConfig = DeviceConfig(),
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = sharedClient
 ) {
+    companion object {
+        val sharedClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .connectionPool(okhttp3.ConnectionPool(128, 5, TimeUnit.MINUTES))
+                .dispatcher(okhttp3.Dispatcher().apply {
+                    maxRequests = 200
+                    maxRequestsPerHost = 100
+                })
+                .build()
+        }
+    }
+
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
     /**

@@ -23,6 +23,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
+        android:largeHeap="true"
         android:usesCleartextTraffic="false">
 
         <activity
