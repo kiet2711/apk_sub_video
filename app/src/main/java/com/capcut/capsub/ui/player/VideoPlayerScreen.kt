@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +67,7 @@ import androidx.media3.ui.PlayerView
 import com.capcut.capsub.data.model.SubtitleDocument
 import com.capcut.capsub.data.repository.SettingsRepository
 import com.capcut.capsub.player.PlayerManager
+import com.capcut.capsub.player.PlayerLoadState
 import com.capcut.capsub.ui.theme.DarkBackground
 import com.capcut.capsub.ui.theme.PrimaryEmerald
 
@@ -84,6 +86,9 @@ fun VideoPlayerScreen(
     val repo = remember { SettingsRepository(context) }
     val historyRepo = remember { com.capcut.capsub.data.repository.HistoryRepository(context) }
     val playerManager = remember { PlayerManager(context) }
+    val attachedPlayer by playerManager.player.collectAsState()
+    val playerLoadState by playerManager.loadState.collectAsState()
+    val playbackError by playerManager.playbackError.collectAsState()
 
     val toggleOrientation = {
         if (isLandscape) {
@@ -175,7 +180,7 @@ fun VideoPlayerScreen(
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        player = playerManager.exoPlayer
+                        player = attachedPlayer
                         useController = true
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -183,8 +188,27 @@ fun VideoPlayerScreen(
                         )
                     }
                 },
+                update = { view -> view.player = attachedPlayer },
                 modifier = Modifier.fillMaxSize()
             )
+
+            if (playerLoadState == PlayerLoadState.RESOLVING || playerLoadState == PlayerLoadState.BUFFERING) {
+                CircularProgressIndicator(
+                    color = PrimaryEmerald,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            playbackError?.let { message ->
+                Text(
+                    text = message,
+                    color = Color(0xFFFFB4AB),
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                        .padding(12.dp)
+                )
+            }
 
             val textColor = try {
                 val cleanHex = colorHex.removePrefix("#")
@@ -372,7 +396,7 @@ fun VideoPlayerScreen(
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
-                                player = playerManager.exoPlayer
+                                player = attachedPlayer
                                 useController = true
                                 layoutParams = FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -380,8 +404,27 @@ fun VideoPlayerScreen(
                                 )
                             }
                         },
+                        update = { view -> view.player = attachedPlayer },
                         modifier = Modifier.fillMaxSize()
                     )
+
+                    if (playerLoadState == PlayerLoadState.RESOLVING || playerLoadState == PlayerLoadState.BUFFERING) {
+                        CircularProgressIndicator(
+                            color = PrimaryEmerald,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                    playbackError?.let { message ->
+                        Text(
+                            text = message,
+                            color = Color(0xFFFFB4AB),
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        )
+                    }
 
                     val textColor = try {
                         val cleanHex = colorHex.removePrefix("#")

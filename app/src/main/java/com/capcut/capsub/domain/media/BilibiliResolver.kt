@@ -50,6 +50,14 @@ data class BilibiliStreamInfo(
     val videoBandwidth: Long = 0L
 )
 
+internal data class BilibiliVideoCandidate(
+    val url: String,
+    val qualityId: Int,
+    val codecId: Int,
+    val codecs: String,
+    val bandwidth: Long
+)
+
 data class BilibiliSubtitleInfo(
     val id: Long,
     val lan: String,
@@ -91,6 +99,27 @@ object BilibiliResolver {
                 lower.contains("bilivideo.com") ||
                 url.contains(Regex("BV[a-zA-Z0-9]{10}", RegexOption.IGNORE_CASE)) ||
                 url.contains(Regex("av\\d+", RegexOption.IGNORE_CASE))
+    }
+
+    fun isBilibiliPageUrl(url: String): Boolean {
+        val lower = url.trim().lowercase()
+        if (!isBilibiliUrl(lower)) return false
+        return !lower.contains("bilivideo") && !lower.contains("biliapi")
+    }
+
+    internal fun selectBestVideoCandidate(
+        candidates: List<BilibiliVideoCandidate>
+    ): BilibiliVideoCandidate? = candidates.maxByOrNull { candidate ->
+        val isAvc = candidate.codecId == 7 || candidate.codecs.lowercase().startsWith("avc1")
+        // 1080p trở xuống ổn định trên nhiều thiết bị hơn 4K/8K. Chỉ chọn
+        // track >1080p nếu API không trả về lựa chọn AVC thấp hơn.
+        val compatibleQualityScore = if (candidate.qualityId <= 80) {
+            1_000L + candidate.qualityId
+        } else {
+            candidate.qualityId.toLong()
+        }
+        (if (isAvc) 1_000_000_000_000L else 0L) +
+            compatibleQualityScore * 1_000_000_000L + candidate.bandwidth
     }
 
     private fun formatCookie(cookie: String): String {
@@ -349,10 +378,14 @@ object BilibiliResolver {
             throw IllegalStateException(json.optString("message", "Lỗi lấy luồng phát video Bilibili"))
         }
 
-        val data = json.getJSONObject("data")
+        parsePlayStreamData(json.getJSONObject("data"))
+    }
+
+    /** Tách riêng phần chọn track để có thể kiểm thử không cần gọi mạng. */
+    internal fun parsePlayStreamData(data: JSONObject): BilibiliStreamInfo {
         val dash = data.optJSONObject("dash")
 
-        if (dash != null) {
+        return if (dash != null) {
             val duration = dash.optLong("duration", data.optLong("timelength", 0L) / 1000L)
             var audioUrl: String? = null
             var audioBandwidth = 0L
@@ -377,10 +410,27 @@ object BilibiliResolver {
             var videoBandwidth = 0L
             val videos = dash.optJSONArray("video")
             if (videos != null && videos.length() > 0) {
-                // Ưu tiên video 1080P/720P AVC/H.264 để ExoPlayer phát mượt mà nhất
-                val vObj = videos.getJSONObject(0)
-                videoUrl = vObj.optString("baseUrl").ifEmpty { vObj.optString("base_url") }
-                videoBandwidth = vObj.optLong("bandwidth", 0L)
+                // API thường xếp AV1/HEVC trước AVC. Nhiều máy Android không giải mã
+                // được các codec đó, nên chọn AVC/H.264 trước, sau đó mới xét
+                // chất lượng và bitrate. id 80 = 1080p, 64 = 720p.
+                val candidates = mutableListOf<BilibiliVideoCandidate>()
+                for (i in 0 until videos.length()) {
+                    val candidate = videos.getJSONObject(i)
+                    val candidateUrl = candidate.optString("baseUrl")
+                        .ifEmpty { candidate.optString("base_url") }
+                    if (candidateUrl.isBlank()) continue
+                    candidates += BilibiliVideoCandidate(
+                        url = candidateUrl,
+                        qualityId = candidate.optInt("id", 0),
+                        codecId = candidate.optInt("codecid", 0),
+                        codecs = candidate.optString("codecs", ""),
+                        bandwidth = candidate.optLong("bandwidth", 0L)
+                    )
+                }
+                selectBestVideoCandidate(candidates)?.let { best ->
+                    videoUrl = best.url
+                    videoBandwidth = best.bandwidth
+                }
             }
 
             BilibiliStreamInfo(
