@@ -49,6 +49,7 @@ fun SubtitleOverlay(
     if (activeSubtitle == null || displayMode == "none") return
 
     var localOffsetY by remember(offsetY) { mutableFloatStateOf(offsetY) }
+    val translationOnly = activeSubtitle.getTranslationOnlyText()
 
     Box(
         modifier = modifier
@@ -93,9 +94,9 @@ fun SubtitleOverlay(
                             textAlign = TextAlign.Center
                         )
                         // Dòng tiếng Việt dịch
-                        if (activeSubtitle.translatedText.isNotBlank()) {
+                        if (translationOnly.isNotBlank() && translationOnly != activeSubtitle.originalText.trim()) {
                             Text(
-                                text = activeSubtitle.translatedText,
+                                text = translationOnly,
                                 fontSize = fontSizeSp,
                                 color = textColor,
                                 fontWeight = FontWeight.Bold,
@@ -116,7 +117,7 @@ fun SubtitleOverlay(
                 }
                 else -> {
                     // Mặc định: Bản dịch tiếng Việt
-                    val text = activeSubtitle.translatedText.ifBlank { activeSubtitle.originalText }
+                    val text = translationOnly.ifBlank { activeSubtitle.originalText }
                     Text(
                         text = text,
                         fontSize = fontSizeSp,

@@ -1,5 +1,8 @@
 package com.capcut.capsub.data.model
 
+import kotlinx.serialization.Serializable
+
+@Serializable
 data class SubtitleItem(
     var id: Int,
     val startMs: Long,
@@ -17,11 +20,42 @@ data class SubtitleItem(
      * - "bilingual": Dòng trên gốc, dòng dưới dịch
      */
     fun getDisplayText(mode: String = "translated"): String {
+        val translationOnly = getTranslationOnlyText()
         return when (mode.lowercase()) {
             "original" -> originalText
-            "bilingual" -> if (translatedText.isNotBlank()) "$originalText\n$translatedText" else originalText
-            else -> translatedText.ifBlank { originalText }
+            "bilingual" -> if (translationOnly.isNotBlank() && translationOnly != originalText.trim()) {
+                "$originalText\n$translationOnly"
+            } else originalText
+            else -> translationOnly.ifBlank { originalText }
         }
+    }
+
+    /**
+     * Gemini đôi khi lặp lại nguyên văn ở dòng đầu rồi mới ghi bản dịch.
+     * Loại phần lặp chính xác để player/TTS không hiển thị hoặc đọc hai ngôn ngữ.
+     */
+    fun getTranslationOnlyText(): String {
+        val source = normalizeLineBreaks(originalText).trim()
+        val value = normalizeLineBreaks(translatedText).trim()
+        if (source.isBlank() || value.isBlank() || value == source) return value
+
+        if (value.startsWith(source)) {
+            val remainder = value.removePrefix(source).trimStart('\n', ' ', '\t', ':', '-', '–', '—')
+            if (remainder.isNotBlank()) return remainder.trim()
+        }
+
+        val sourceLines = source.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val valueLines = value.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (sourceLines.isNotEmpty() && valueLines.size > sourceLines.size &&
+            valueLines.take(sourceLines.size) == sourceLines
+        ) {
+            return valueLines.drop(sourceLines.size).joinToString("\n").trim()
+        }
+        return value
+    }
+
+    fun normalizeTranslation() {
+        translatedText = getTranslationOnlyText()
     }
 
     /**
@@ -39,6 +73,9 @@ data class SubtitleItem(
     }
 
     companion object {
+        private fun normalizeLineBreaks(text: String): String =
+            text.replace("\r\n", "\n").replace("\r", "\n")
+
         fun msToSrt(ms: Long): String {
             val totalSec = (ms / 1000).coerceAtLeast(0)
             val milli = (ms % 1000).coerceAtLeast(0)

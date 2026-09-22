@@ -97,6 +97,7 @@ class GeminiTranslator(
                 chunkItems.forEachIndexed { itemIdx, originalItem ->
                     val trans = translatedTexts.getOrNull(itemIdx) ?: originalItem.originalText
                     originalItem.translatedText = trans
+                    originalItem.normalizeTranslation()
                 }
             }
         }
@@ -224,8 +225,9 @@ class GeminiTranslator(
 
             QUY TẮC BẢO TOÀN CẤU TRÚC PHỤ ĐỀ SRT:
             1. Đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
-            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000). Dưới mỗi timecode là 1 bản dịch tương ứng.
-            3. KHÔNG thêm lời chào, giải thích ngoài định dạng SRT chuẩn.
+            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000).
+            3. Dưới mỗi timecode CHỈ ĐƯỢC ghi bản dịch ở ngôn ngữ đích. TUYỆT ĐỐI KHÔNG lặp lại câu gốc, không xuất song ngữ.
+            4. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch" hoặc giải thích ngoài định dạng SRT chuẩn.
         """.trimIndent()
     }
 }

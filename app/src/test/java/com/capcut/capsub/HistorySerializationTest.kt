@@ -1,6 +1,8 @@
 package com.capcut.capsub
 
 import com.capcut.capsub.data.model.HistoryItem
+import com.capcut.capsub.data.model.SubtitleDocument
+import com.capcut.capsub.data.model.SubtitleItem
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -58,5 +60,25 @@ class HistorySerializationTest {
         assertEquals("history-legacy", decoded[0].id)
         assertEquals(null, decoded[0].ttsVoice)
         assertEquals(null, decoded[0].docKey)
+    }
+
+    @Test
+    fun bilingualSubtitleDocumentCanBeSavedAndLoadedWithoutLosingEitherLanguage() {
+        val expected = SubtitleDocument(
+            mutableListOf(
+                SubtitleItem(
+                    id = 1,
+                    startMs = 40L,
+                    endMs = 2_560L,
+                    originalText = "为了摆脱被囚禁的必死结局",
+                    translatedText = "Để thoát khỏi cái kết chết chóc bị giam cầm."
+                )
+            )
+        )
+
+        val encoded = json.encodeToString(expected)
+        val decoded = json.decodeFromString<SubtitleDocument>(encoded)
+
+        assertEquals(expected, decoded)
     }
 }

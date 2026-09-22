@@ -75,6 +75,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.capcut.capsub.data.model.SubtitleDocument
 import com.capcut.capsub.data.model.SubtitleItem
 import com.capcut.capsub.data.model.VoiceItem
@@ -113,6 +115,7 @@ fun TtsStudioScreen(
     val progress by ttsManager.progress.collectAsState()
 
     val historyRepo = remember { com.capcut.capsub.data.repository.HistoryRepository(context) }
+    val screenScope = rememberCoroutineScope()
     val historyList by com.capcut.capsub.data.repository.HistoryRepository.historyFlow.collectAsState()
     var effectiveVideoUri by remember(currentVideoUri) {
         mutableStateOf(currentVideoUri)
@@ -1111,21 +1114,23 @@ fun TtsStudioScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        val loadedDoc = historyRepo.loadSubtitleDocument(item)
-                                        if (loadedDoc.items.isNotEmpty()) {
-                                            effectiveVideoUri = Uri.parse(item.videoUri)
-                                            item.ttsVoice?.let { voiceId ->
-                                                VoicePresets.VIETNAMESE_VOICES.find { it.voiceType == voiceId }?.let {
-                                                    selectedVoice = it
+                                        screenScope.launch {
+                                            val loadedDoc = historyRepo.loadSubtitleDocumentWithRecovery(item)
+                                            if (loadedDoc.items.isNotEmpty()) {
+                                                effectiveVideoUri = Uri.parse(item.videoUri)
+                                                item.ttsVoice?.let { voiceId ->
+                                                    VoicePresets.VIETNAMESE_VOICES.find { it.voiceType == voiceId }?.let {
+                                                        selectedVoice = it
+                                                    }
                                                 }
+                                                com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, loadedDoc, selectedVoice.voiceType)
+                                                activeDoc = loadedDoc
+                                                onSubtitleLoaded(loadedDoc)
+                                                showHistoryPicker = false
+                                                Toast.makeText(context, "Đã nạp video '${item.videoName}'!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Không tìm thấy phụ đề của video này", Toast.LENGTH_SHORT).show()
                                             }
-                                            com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(context, loadedDoc, selectedVoice.voiceType)
-                                            activeDoc = loadedDoc
-                                            onSubtitleLoaded(loadedDoc)
-                                            showHistoryPicker = false
-                                            Toast.makeText(context, "Đã nạp video '${item.videoName}'!", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "Không tìm thấy phụ đề của video này", Toast.LENGTH_SHORT).show()
                                         }
                                     },
                                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2029)),
@@ -1367,4 +1372,3 @@ fun TtsStudioScreen(
         )
     }
 }
-

@@ -68,4 +68,38 @@ class SubtitleParserTest {
         assertEquals(null, doc.getActiveItem(3500L))
         assertEquals("Câu 2", doc.getActiveItem(5500L)?.originalText)
     }
+
+    @Test
+    fun translatedModeRemovesRepeatedSourceAndBilingualHasExactlyTwoLines() {
+        val item = SubtitleItem(
+            id = 1,
+            startMs = 0L,
+            endMs = 2_000L,
+            originalText = "为了摆脱被囚禁的必死结局",
+            translatedText = "为了摆脱被囚禁的必死结局\nĐể thoát khỏi cái kết chết chóc bị giam cầm."
+        )
+
+        assertEquals("Để thoát khỏi cái kết chết chóc bị giam cầm.", item.getDisplayText("translated"))
+        assertEquals(
+            "为了摆脱被囚禁的必死结局\nĐể thoát khỏi cái kết chết chóc bị giam cầm.",
+            item.getDisplayText("bilingual")
+        )
+    }
+
+    @Test
+    fun recoverLegacyChineseVietnameseHistory() {
+        val legacy = SubtitleDocument.parseSrt(
+            """
+            1
+            00:00:00,040 --> 00:00:02,560
+            为了摆脱被囚禁的必死结局
+            Để thoát khỏi cái kết chết chóc bị giam cầm.
+            """.trimIndent()
+        )
+
+        legacy.recoverLegacyBilingualText("zh-CN")
+
+        assertEquals("为了摆脱被囚禁的必死结局", legacy.items.single().originalText)
+        assertEquals("Để thoát khỏi cái kết chết chóc bị giam cầm.", legacy.items.single().translatedText)
+    }
 }

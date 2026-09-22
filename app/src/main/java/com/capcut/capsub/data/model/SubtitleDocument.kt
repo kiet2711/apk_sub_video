@@ -1,6 +1,9 @@
 package com.capcut.capsub.data.model
 
+import kotlinx.serialization.Serializable
 import java.io.File
+
+@Serializable
 data class SubtitleDocument(
     val items: MutableList<SubtitleItem> = mutableListOf()
 ) {
@@ -11,6 +14,22 @@ data class SubtitleDocument(
         items.sortBy { it.startMs }
         items.forEachIndexed { index, item ->
             item.id = index + 1
+        }
+    }
+
+    fun normalizeTranslations() {
+        items.forEach { it.normalizeTranslation() }
+    }
+
+    /** Khôi phục file cũ từng lưu "dòng Trung + dòng Việt" trong cùng một field. */
+    fun recoverLegacyBilingualText(sourceLanguage: String) {
+        if (!sourceLanguage.lowercase().startsWith("zh")) return
+        items.forEach { item ->
+            if (item.translatedText.trim() != item.originalText.trim()) return@forEach
+            splitChineseSourceAndTranslation(item.originalText)?.let { (source, translation) ->
+                item.originalText = source
+                item.translatedText = translation
+            }
         }
     }
 
@@ -72,6 +91,24 @@ data class SubtitleDocument(
     }
 
     companion object {
+        private val HAN_CHARACTER = Regex("[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]")
+
+        internal fun splitChineseSourceAndTranslation(text: String): Pair<String, String>? {
+            val lines = text.replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .lines()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+            if (lines.size < 2 || !HAN_CHARACTER.containsMatchIn(lines.first())) return null
+
+            val translationStart = lines.indexOfFirst { !HAN_CHARACTER.containsMatchIn(it) }
+            if (translationStart <= 0 || translationStart >= lines.size) return null
+
+            val source = lines.take(translationStart).joinToString("\n").trim()
+            val translation = lines.drop(translationStart).joinToString("\n").trim()
+            return if (source.isNotBlank() && translation.isNotBlank()) source to translation else null
+        }
+
         /**
          * Parser đọc file SRT linh hoạt (bảo vệ chống lỗi khoảng trắng, định dạng giờ)
          */

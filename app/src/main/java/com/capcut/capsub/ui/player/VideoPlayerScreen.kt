@@ -456,6 +456,7 @@ fun VideoPlayerScreen(
                 TranscriptSheet(
                     document = subtitleDoc,
                     activeSubtitle = activeSubtitle,
+                    displayMode = subtitleMode,
                     onSeekTo = { seekMs -> playerManager.seekTo(seekMs) },
                     onSubtitleEdited = { _, _ ->
                         subtitleDocVersion++

@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 fun TranscriptSheet(
     document: SubtitleDocument,
     activeSubtitle: SubtitleItem?,
+    displayMode: String = "translated",
     onSeekTo: (Long) -> Unit,
     onSubtitleEdited: ((SubtitleItem, String) -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -74,6 +75,7 @@ fun TranscriptSheet(
             TranscriptItemCard(
                 item = item,
                 isActive = isActive,
+                displayMode = displayMode,
                 onClick = { onSeekTo(item.startMs) },
                 onEditClick = { editingItem = item }
             )
@@ -96,6 +98,7 @@ fun TranscriptSheet(
 fun TranscriptItemCard(
     item: SubtitleItem,
     isActive: Boolean,
+    displayMode: String = "translated",
     onClick: () -> Unit,
     onEditClick: () -> Unit
 ) {
@@ -155,18 +158,19 @@ fun TranscriptItemCard(
                 }
             }
 
-            // Câu dịch tiếng Việt
-            val translated = item.translatedText.ifBlank { item.originalText }
+            val normalizedMode = displayMode.lowercase()
+            val translated = item.getTranslationOnlyText().ifBlank { item.originalText }
+            val primaryText = if (normalizedMode == "original") item.originalText else translated
             Text(
-                text = translated,
+                text = primaryText,
                 fontSize = 15.sp,
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                 color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(top = 2.dp)
             )
 
-            // Câu gốc (nếu có bản dịch)
-            if (item.translatedText.isNotBlank() && item.originalText != item.translatedText) {
+            // Chỉ hiển thêm câu gốc khi người dùng chọn đúng chế độ Song Ngữ.
+            if (normalizedMode == "bilingual" && translated != item.originalText.trim()) {
                 Text(
                     text = item.originalText,
                     fontSize = 12.sp,

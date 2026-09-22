@@ -48,6 +48,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun HistoryScreen(
@@ -77,6 +79,7 @@ fun HistoryScreen(
 ) {
     val context = LocalContext.current
     val historyRepo = remember { HistoryRepository(context) }
+    val scope = rememberCoroutineScope()
     val historyList by HistoryRepository.historyFlow.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
 
@@ -230,13 +233,17 @@ fun HistoryScreen(
                         HistoryCard(
                             item = item,
                             onPlay = {
-                                val doc = historyRepo.loadSubtitleDocument(item)
-                                onPlayHistoryItem(Uri.parse(item.videoUri), doc)
+                                scope.launch {
+                                    val doc = historyRepo.loadSubtitleDocumentWithRecovery(item)
+                                    onPlayHistoryItem(Uri.parse(item.videoUri), doc)
+                                }
                             },
                             onOpenInTts = if (onOpenInTts != null) {
                                 {
-                                    val doc = historyRepo.loadSubtitleDocument(item)
-                                    onOpenInTts(Uri.parse(item.videoUri), doc)
+                                    scope.launch {
+                                        val doc = historyRepo.loadSubtitleDocumentWithRecovery(item)
+                                        onOpenInTts(Uri.parse(item.videoUri), doc)
+                                    }
                                 }
                             } else null,
                             onExportSrt = {
