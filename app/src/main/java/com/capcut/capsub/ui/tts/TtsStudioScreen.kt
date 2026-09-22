@@ -1041,6 +1041,8 @@ fun TtsStudioScreen(
             failedItems = progress.failedItems,
             isRetrying = progress.isRunning,
             threadCount = threadCount,
+            geminiThreadCount = repo.geminiThreadCount,
+            geminiApiKeysAvailable = repo.geminiApiKeys.isNotEmpty(),
             onRetryOne = { itemId, editedText ->
                 val doc = activeDoc ?: return@TtsErrorReviewDialog
                 showErrorReview = false
@@ -1075,6 +1077,113 @@ fun TtsStudioScreen(
                             selectedVoice.voiceType
                         )
                         effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc, selectedVoice.voiceType) }
+                    }
+                )
+            },
+            onTranslateWithGemini = { items, progressCb, onDone ->
+                val apiKeys = repo.geminiApiKeys
+                if (apiKeys.isEmpty()) {
+                    Toast.makeText(context, "Vui lòng nhập Gemini API Key trong Cài đặt trước!", Toast.LENGTH_SHORT).show()
+                    onDone(emptyMap())
+                    return@TtsErrorReviewDialog
+                }
+                screenScope.launch {
+                    try {
+                        val model = if (repo.selectedModel.startsWith("gemini")) repo.selectedModel else "gemini-3.5-flash-lite"
+                        val translator = com.capcut.capsub.data.api.GeminiTranslator(apiKeys = apiKeys, modelId = model)
+                        val doc = activeDoc
+                        val pairs = items.map { (itemId, currentText) ->
+                            val docItem = doc?.items?.firstOrNull { it.id == itemId }
+                            val textToTranslate = when {
+                                currentText.any { it.toString().matches(Regex("[\\u4e00-\\u9fff]")) } -> currentText
+                                docItem != null && docItem.originalText.any { it.toString().matches(Regex("[\\u4e00-\\u9fff]")) } -> docItem.originalText
+                                currentText.isNotBlank() -> currentText
+                                docItem != null && docItem.originalText.isNotBlank() -> docItem.originalText
+                                else -> currentText
+                            }
+                            itemId to textToTranslate
+                        }
+                        val transMap = translator.translateItems(
+                            items = pairs,
+                            stylePreset = repo.selectedStyle,
+                            customPrompt = repo.geminiCustomPrompt,
+                            targetLanguage = repo.targetLanguageLabel,
+                            threadCount = repo.geminiThreadCount,
+                            progressCallback = progressCb
+                        )
+                        doc?.let { d ->
+                            transMap.forEach { (id, trans) ->
+                                val item = d.items.firstOrNull { it.id == id }
+                                if (item != null) {
+                                    item.translatedText = trans
+                                    item.normalizeTranslation()
+                                }
+                            }
+                            effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, d, selectedVoice.voiceType) }
+                        }
+                        onDone(transMap)
+                        Toast.makeText(context, "Đã dịch xong ${transMap.size} câu bằng Gemini AI!", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Lỗi dịch Gemini: ${e.message}", Toast.LENGTH_LONG).show()
+                        onDone(emptyMap())
+                    }
+                }
+            },
+            onTranslateSingleWithGemini = { itemId, text, onDone ->
+                val apiKeys = repo.geminiApiKeys
+                if (apiKeys.isEmpty()) {
+                    Toast.makeText(context, "Chưa có Gemini API Key!", Toast.LENGTH_SHORT).show()
+                    onDone(text)
+                    return@TtsErrorReviewDialog
+                }
+                screenScope.launch {
+                    try {
+                        val model = if (repo.selectedModel.startsWith("gemini")) repo.selectedModel else "gemini-3.5-flash-lite"
+                        val translator = com.capcut.capsub.data.api.GeminiTranslator(apiKeys = apiKeys, modelId = model)
+                        val doc = activeDoc
+                        val docItem = doc?.items?.firstOrNull { it.id == itemId }
+                        val textToTranslate = when {
+                            text.any { it.toString().matches(Regex("[\\u4e00-\\u9fff]")) } -> text
+                            docItem != null && docItem.originalText.any { it.toString().matches(Regex("[\\u4e00-\\u9fff]")) } -> docItem.originalText
+                            text.isNotBlank() -> text
+                            docItem != null && docItem.originalText.isNotBlank() -> docItem.originalText
+                            else -> text
+                        }
+                        val trans = translator.translateSingleText(
+                            text = textToTranslate,
+                            stylePreset = repo.selectedStyle,
+                            customPrompt = repo.geminiCustomPrompt,
+                            targetLanguage = repo.targetLanguageLabel
+                        )
+                        doc?.let { d ->
+                            val item = d.items.firstOrNull { it.id == itemId }
+                            if (item != null) {
+                                item.translatedText = trans
+                                item.normalizeTranslation()
+                            }
+                            effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, d, selectedVoice.voiceType) }
+                        }
+                        onDone(trans)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "Lỗi dịch câu: ${e.message}", Toast.LENGTH_SHORT).show()
+                        onDone(text)
+                    }
+                }
+            },
+            onSkipErrors = {
+                val doc = activeDoc ?: return@TtsErrorReviewDialog
+                showErrorReview = false
+                ttsManager.skipFailedItems(
+                    subtitleDoc = doc,
+                    voice = selectedVoice,
+                    onCompleted = {
+                        com.capcut.capsub.domain.tts.TtsCacheHelper.linkAudioFiles(
+                            context,
+                            doc,
+                            selectedVoice.voiceType
+                        )
+                        effectiveVideoUri?.let { historyRepo.updateSubtitleForUri(it, doc, selectedVoice.voiceType) }
+                        Toast.makeText(context, "Đã bỏ qua các câu lỗi. Video đã sẵn sàng phát!", Toast.LENGTH_SHORT).show()
                     }
                 )
             },

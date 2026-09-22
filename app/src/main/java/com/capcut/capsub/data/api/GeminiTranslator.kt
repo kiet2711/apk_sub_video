@@ -106,6 +106,180 @@ class GeminiTranslator(
         return@withContext document
     }
 
+    /**
+     * Dịch danh sách các câu lỗi/câu chỉ định bằng Gemini AI đa luồng:
+     * - Chia các câu thành từng khối nhỏ (10-15 câu).
+     * - Đánh số định danh [ID] rõ ràng để Gemini trả về đúng từng câu theo ID.
+     * - Chạy song song qua Semaphore theo số luồng người dùng cấu hình.
+     * - Tự động xoay vòng Gemini API Key và thử lại khi gặp lỗi.
+     *
+     * @return Map ánh xạ giữa itemId và nội dung đã dịch sang tiếng Việt.
+     */
+    suspend fun translateItems(
+        items: List<Pair<Int, String>>,
+        stylePreset: String = "Zhihu",
+        customPrompt: String = "",
+        targetLanguage: String = "Tiếng Việt",
+        chunkSize: Int = 15,
+        threadCount: Int = 2,
+        progressCallback: ((Float, String) -> Unit)? = null
+    ): Map<Int, String> = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext emptyMap()
+        if (apiKeys.isEmpty()) throw IllegalStateException("Chưa có Gemini API Key! Vui lòng vào Cài đặt để thêm Key.")
+
+        val validItems = items.filter { it.second.isNotBlank() }
+        if (validItems.isEmpty()) return@withContext emptyMap()
+
+        val chunks = validItems.chunked(chunkSize.coerceIn(5, 20))
+        val totalChunks = chunks.size
+        val systemPrompt = buildSystemPrompt(stylePreset, targetLanguage, customPrompt, isSrt = false)
+
+        val effectiveThreads = threadCount.coerceIn(1, 10).coerceAtMost(chunks.size)
+        val semaphore = Semaphore(effectiveThreads)
+        val completedCount = AtomicInteger(0)
+        val resultMap = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+        progressCallback?.invoke(
+            0.05f,
+            if (effectiveThreads > 1) "Đang chạy $effectiveThreads luồng Gemini dịch $totalChunks nhóm câu lỗi..."
+            else "Đang chuẩn bị dịch ${validItems.size} câu lỗi..."
+        )
+
+        coroutineScope {
+            val deferredList = chunks.mapIndexed { chunkIdx, chunkList ->
+                async(Dispatchers.IO) {
+                    semaphore.withPermit {
+                        try {
+                            val chunkResult = translateNumberedChunk(chunkList, systemPrompt)
+                            resultMap.putAll(chunkResult)
+
+                            // Nếu nhóm có câu nào bị AI bỏ sót, tự động dịch bổ sung từng câu
+                            val missing = chunkList.filter { !chunkResult.containsKey(it.first) }
+                            missing.forEach { (id, text) ->
+                                try {
+                                    val single = translateSingleTextInternal(text, systemPrompt)
+                                    if (single.isNotBlank()) {
+                                        resultMap[id] = single
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("GeminiTranslator", "Lỗi dịch khối $chunkIdx: ${e.message}")
+                            // Thử lại từng câu trong khối nếu cả khối bị lỗi định dạng
+                            chunkList.forEach { (id, text) ->
+                                try {
+                                    val singleTrans = translateSingleTextInternal(text, systemPrompt)
+                                    if (singleTrans.isNotBlank()) {
+                                        resultMap[id] = singleTrans
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                        val done = completedCount.incrementAndGet()
+                        val pct = 0.05f + (done.toFloat() / totalChunks) * 0.90f
+                        progressCallback?.invoke(pct, "Gemini đã dịch xong $done/$totalChunks nhóm (${resultMap.size} câu thành công)...")
+                    }
+                }
+            }
+            deferredList.awaitAll()
+        }
+
+        progressCallback?.invoke(1.0f, "Dịch xong ${resultMap.size}/${validItems.size} câu!")
+        return@withContext resultMap
+    }
+
+    private fun translateNumberedChunk(
+        items: List<Pair<Int, String>>,
+        systemPrompt: String,
+        maxRetries: Int = 3
+    ): Map<Int, String> {
+        val sb = StringBuilder()
+        sb.append("Hãy dịch chính xác các câu thoại sau đây sang ngôn ngữ đích theo số định danh [ID].\n")
+        sb.append("QUY TẮC BẮT BUỘC:\n")
+        sb.append("1. Bắt buộc giữ nguyên số định danh [ID] ở đầu mỗi câu (ví dụ: [101]: <bản dịch tiếng Việt>).\n")
+        sb.append("2. Phiên âm 100% họ tên, tên riêng, chức vụ sang âm Hán Việt chuẩn mực (Ví dụ: 余昭昭 -> Dư Chiêu Chiêu, 顾总 -> Cố tổng).\n")
+        sb.append("3. Không dịch nửa vời, tuyệt đối không để sót chữ Hán trong bản dịch.\n")
+        sb.append("4. Mỗi câu một dòng theo đúng định dạng: [ID]: <bản dịch>\n\n")
+        sb.append("DANH SÁCH CÂU CẦN DỊCH:\n")
+        items.forEach { (id, text) ->
+            sb.append("[$id]: ${text.trim()}\n")
+        }
+
+        val prompt = sb.toString()
+        var lastError: Exception? = null
+        val attempts = maxRetries.coerceAtLeast(apiKeys.size)
+        // Hỗ trợ linh hoạt các format: [101]: text, **[101]:** text, 101. text, - [101]: text, etc.
+        val lineRegex = Regex("""^[ \t\-\*•]*(?:\*\*)?(?:\[|\#)?(\d+)(?:\]|\.|\:|\))?(?:\*\*)?[:\s\-–—]+(.+)$""")
+
+        for (attempt in 0 until attempts) {
+            val key = getNextApiKey()
+            try {
+                val rawResponse = callGeminiRestApi(prompt, systemPrompt, key)
+                val resultMap = mutableMapOf<Int, String>()
+
+                rawResponse.lines().forEach { line ->
+                    val trimmed = line.trim()
+                    if (trimmed.startsWith("```")) return@forEach
+                    val match = lineRegex.find(trimmed)
+                    if (match != null) {
+                        val id = match.groupValues[1].toIntOrNull()
+                        var text = match.groupValues[2].trim()
+                        if (text.startsWith("**") && text.endsWith("**") && text.length > 4) {
+                            text = text.substring(2, text.length - 2).trim()
+                        }
+                        text = text.removeSurrounding("\"").removeSurrounding("'").trim()
+                        if (id != null && text.isNotBlank()) {
+                            resultMap[id] = text
+                        }
+                    }
+                }
+
+                if (resultMap.isNotEmpty()) {
+                    return resultMap
+                }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+
+        throw IOException("Dịch nhóm câu thất bại: ${lastError?.message}", lastError)
+    }
+
+    /**
+     * Dịch một câu đơn lẻ bằng Gemini AI (cho nút Dịch lẻ trên từng thẻ câu).
+     */
+    suspend fun translateSingleText(
+        text: String,
+        stylePreset: String = "Zhihu",
+        customPrompt: String = "",
+        targetLanguage: String = "Tiếng Việt"
+    ): String = withContext(Dispatchers.IO) {
+        if (text.isBlank()) return@withContext text
+        if (apiKeys.isEmpty()) throw IllegalStateException("Chưa có Gemini API Key! Vui lòng vào Cài đặt để thêm Key.")
+
+        val systemPrompt = buildSystemPrompt(stylePreset, targetLanguage, customPrompt, isSrt = false)
+        return@withContext translateSingleTextInternal(text, systemPrompt)
+    }
+
+    private fun translateSingleTextInternal(text: String, systemPrompt: String): String {
+        val prompt = "Hãy dịch câu thoại sau đây sang ngôn ngữ đích. Chỉ trả về duy nhất nội dung bản dịch, không giải thích, phiên âm toàn bộ tên riêng sang Hán Việt:\n$text"
+        val attempts = 3.coerceAtLeast(apiKeys.size)
+        var lastError: Exception? = null
+        for (attempt in 0 until attempts) {
+            val key = getNextApiKey()
+            try {
+                val res = callGeminiRestApi(prompt, systemPrompt, key).trim()
+                if (res.isNotBlank()) {
+                    val cleaned = res.replace(Regex("""^\[\d+\][\s:\-]+"""), "").trim()
+                    return if (cleaned.isNotBlank()) cleaned else res
+                }
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw IOException("Dịch câu thất bại: ${lastError?.message}", lastError)
+    }
+
     private suspend fun translateChunkWithRetry(
         items: List<SubtitleItem>,
         systemPrompt: String,
@@ -194,7 +368,12 @@ class GeminiTranslator(
         return text.trim()
     }
 
-    private fun buildSystemPrompt(stylePreset: String, targetLanguage: String, customPrompt: String): String {
+    private fun buildSystemPrompt(
+        stylePreset: String,
+        targetLanguage: String,
+        customPrompt: String,
+        isSrt: Boolean = true
+    ): String {
         val styleGuide = when (stylePreset.lowercase()) {
             "zhihu" -> "Phong cách phim ngắn Zhihu vả mặt kịch tính, nhịp điệu dồn dập, sắc bén, gãy gọn, gay cấn."
             "thuanviet" -> "Phong cách văn học trau chuốt, mượt mà, giàu cảm xúc, thoát ý tự nhiên."
@@ -209,8 +388,19 @@ class GeminiTranslator(
             """.trimIndent()
         } else ""
 
+        val srtRules = if (isSrt) {
+            """
+
+            QUY TẮC BẢO TOÀN CẤU TRÚC PHỤ ĐỀ SRT:
+            1. Đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
+            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000).
+            3. Dưới mỗi timecode CHỈ ĐƯỢC ghi bản dịch ở ngôn ngữ đích. TUYỆT ĐỐI KHÔNG lặp lại câu gốc, không xuất song ngữ.
+            4. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch" hoặc giải thích ngoài định dạng SRT chuẩn.
+            """.trimIndent()
+        } else ""
+
         return """
-            Bạn là chuyên gia dịch thuật phụ đề video chuyên nghiệp hàng đầu thế giới.
+            Bạn là chuyên gia dịch thuật phụ đề video và lời thoại phim chuyên nghiệp hàng đầu thế giới.
             NGÔN NGỮ ĐÍCH CẦN DỊCH: $targetLanguage.
 
             YÊU CẦU PHONG CÁCH:
@@ -222,12 +412,7 @@ class GeminiTranslator(
             1. PHIÊN ÂM 100% SANG HÁN VIỆT: Toàn bộ họ tên nhân vật, tên riêng, biệt danh, chức vụ BẮT BUỘC phải chuyển sang âm Hán Việt chuẩn mực (Ví dụ: 余昭昭 -> Dư Chiêu Chiêu, 顾总 -> Cố tổng, 陆爷 -> Lục gia, 李特助 -> trợ lý Lý...).
             2. TUYỆT ĐỐI KHÔNG DỊCH NỬA VỜI: Nghiêm cấm tuyệt đối việc dịch một nửa tiếng Việt một nửa để lại chữ Hán (CẤM: 'Dư 昭昭', 'Cố 总'...).
             3. 100% THUẦN NGÔN NGỮ ĐÍCH: Không để sót bất kỳ chữ Hán nào trong kết quả dịch.
-
-            QUY TẮC BẢO TOÀN CẤU TRÚC PHỤ ĐỀ SRT:
-            1. Đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
-            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000).
-            3. Dưới mỗi timecode CHỈ ĐƯỢC ghi bản dịch ở ngôn ngữ đích. TUYỆT ĐỐI KHÔNG lặp lại câu gốc, không xuất song ngữ.
-            4. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch" hoặc giải thích ngoài định dạng SRT chuẩn.
+            $srtRules
         """.trimIndent()
     }
 }

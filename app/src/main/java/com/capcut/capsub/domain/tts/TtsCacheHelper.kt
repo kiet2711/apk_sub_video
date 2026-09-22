@@ -152,14 +152,17 @@ object TtsCacheHelper {
                 item.audioFilePath = null
                 item.audioDurationMs = 0L
                 item.playbackSpeed = 1.0f
-                issues.add(
-                    CacheIssue(
-                        itemId = item.id,
-                        text = item.getDisplayText(),
-                        reason = validation.reason,
-                        filePath = file.absolutePath
+                val displayText = item.getDisplayText()
+                if (displayText.any { it.isLetterOrDigit() }) {
+                    issues.add(
+                        CacheIssue(
+                            itemId = item.id,
+                            text = displayText,
+                            reason = validation.reason,
+                            filePath = file.absolutePath
+                        )
                     )
-                )
+                }
             }
         }
         if (linkedCount > 0) {

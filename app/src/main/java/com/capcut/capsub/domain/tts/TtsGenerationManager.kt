@@ -52,6 +52,12 @@ class TtsGenerationManager(private val context: Context) {
     private val _progress = MutableStateFlow(TtsProgressState())
     val progress: StateFlow<TtsProgressState> = _progress.asStateFlow()
 
+    companion object {
+        fun isPronounceable(text: String): Boolean {
+            return text.any { it.isLetterOrDigit() }
+        }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeJob: Job? = null
 
@@ -69,7 +75,7 @@ class TtsGenerationManager(private val context: Context) {
         val items = subtitleDoc.items.filter { item ->
             val text = textFor(item, subMode)
             val validation = AudioFileValidator.validate(File(cacheDir, "sub_${item.id}.mp3"))
-            text.isNotBlank() && (forceRegenerate || !validation.isValid)
+            isPronounceable(text) && (forceRegenerate || !validation.isValid)
         }
 
         if (items.isEmpty()) {
@@ -99,7 +105,7 @@ class TtsGenerationManager(private val context: Context) {
         val failedIds = _progress.value.failedItems.map { it.itemId }.toSet()
         if (failedIds.isEmpty()) return
         applyEditedTexts(subtitleDoc, editedTexts, subMode)
-        val items = subtitleDoc.items.filter { it.id in failedIds && textFor(it, subMode).isNotBlank() }
+        val items = subtitleDoc.items.filter { it.id in failedIds && isPronounceable(textFor(it, subMode)) }
         stopActiveJob()
         runBatch(subtitleDoc, voice, threadCount, subMode, items, true, onCompleted)
     }
@@ -115,14 +121,43 @@ class TtsGenerationManager(private val context: Context) {
     ) {
         val item = subtitleDoc.items.firstOrNull { it.id == itemId } ?: return
         applyEditedTexts(subtitleDoc, mapOf(itemId to editedText), subMode)
-        if (textFor(item, subMode).isBlank()) {
+        if (!isPronounceable(textFor(item, subMode))) {
             _progress.update { state ->
-                state.copy(errorMessage = "Câu #$itemId đang rỗng", currentSentence = "Câu #$itemId đang rỗng")
+                state.copy(
+                    errorMessage = "Câu #$itemId chỉ chứa dấu câu hoặc rỗng, không thể phát âm",
+                    currentSentence = "Câu #$itemId không thể phát âm"
+                )
             }
             return
         }
         stopActiveJob()
         runBatch(subtitleDoc, voice, threadCount, subMode, listOf(item), true, onCompleted)
+    }
+
+    /**
+     * Bỏ qua tất cả câu lỗi hiện tại, đánh dấu hoàn tất và giữ nguyên các câu đã tạo thành công.
+     */
+    fun skipFailedItems(
+        subtitleDoc: SubtitleDocument,
+        voice: VoiceItem,
+        subMode: String = "translated",
+        onCompleted: (() -> Unit)? = null
+    ) {
+        stopActiveJob()
+        val audit = TtsCacheHelper.auditAndLinkAudioFiles(context, subtitleDoc, voice.voiceType)
+        val validTargetCount = subtitleDoc.items.count { isPronounceable(textFor(it, subMode)) }
+        _progress.update { state ->
+            state.copy(
+                isRunning = false,
+                isFinished = true,
+                failedItems = emptyList(),
+                completedCount = audit.linkedCount,
+                totalCount = validTargetCount,
+                currentSentence = "Đã bỏ qua các câu lỗi. Đã sẵn sàng phát video (${audit.linkedCount} câu)!",
+                errorMessage = null
+            )
+        }
+        onCompleted?.invoke()
     }
 
     private fun runBatch(
@@ -178,6 +213,14 @@ class TtsGenerationManager(private val context: Context) {
                         if (_progress.value.isCancelled) break
                         val text = textFor(item, subMode)
                         val destFile = File(cacheDir, "sub_${item.id}.mp3")
+
+                        if (!isPronounceable(text)) {
+                            // Câu chỉ chứa ký tự dấu câu / không phát âm được -> bỏ qua không gọi CapCut API
+                            item.audioFilePath = null
+                            item.audioDurationMs = 0L
+                            processedCounter.incrementAndGet()
+                            continue
+                        }
 
                         try {
                             val currentValidation = AudioFileValidator.validate(destFile)
@@ -249,7 +292,7 @@ class TtsGenerationManager(private val context: Context) {
         val failedItems = audit.issues.mapNotNull { issue ->
             val item = subtitleDoc.items.firstOrNull { it.id == issue.itemId } ?: return@mapNotNull null
             val text = textFor(item, subMode)
-            if (text.isBlank()) return@mapNotNull null
+            if (!isPronounceable(text)) return@mapNotNull null
             TtsFailedItem(
                 itemId = item.id,
                 text = text,
@@ -258,7 +301,7 @@ class TtsGenerationManager(private val context: Context) {
             )
         }.sortedBy { it.itemId }
 
-        val validTargetCount = subtitleDoc.items.count { textFor(it, subMode).isNotBlank() }
+        val validTargetCount = subtitleDoc.items.count { isPronounceable(textFor(it, subMode)) }
         val successCount = validTargetCount - failedItems.size
         val message = if (failedItems.isEmpty()) {
             "Đã hoàn thành lồng tiếng toàn bộ $successCount câu thoại!"
