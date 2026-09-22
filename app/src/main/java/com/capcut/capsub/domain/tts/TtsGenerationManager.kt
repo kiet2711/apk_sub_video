@@ -56,6 +56,10 @@ class TtsGenerationManager(private val context: Context) {
         fun isPronounceable(text: String): Boolean {
             return text.any { it.isLetterOrDigit() }
         }
+
+        fun isTrulyBlankSubtitle(item: SubtitleItem): Boolean {
+            return !item.originalText.any { it.isLetterOrDigit() } && !item.translatedText.any { it.isLetterOrDigit() }
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -73,9 +77,8 @@ class TtsGenerationManager(private val context: Context) {
         subtitleDoc.reindex()
         val cacheDir = TtsCacheHelper.getCacheDir(context, subtitleDoc, voice.voiceType)
         val items = subtitleDoc.items.filter { item ->
-            val text = textFor(item, subMode)
             val validation = AudioFileValidator.validate(File(cacheDir, "sub_${item.id}.mp3"))
-            isPronounceable(text) && (forceRegenerate || !validation.isValid)
+            !isTrulyBlankSubtitle(item) && (forceRegenerate || !validation.isValid)
         }
 
         if (items.isEmpty()) {
@@ -105,7 +108,7 @@ class TtsGenerationManager(private val context: Context) {
         val failedIds = _progress.value.failedItems.map { it.itemId }.toSet()
         if (failedIds.isEmpty()) return
         applyEditedTexts(subtitleDoc, editedTexts, subMode)
-        val items = subtitleDoc.items.filter { it.id in failedIds && isPronounceable(textFor(it, subMode)) }
+        val items = subtitleDoc.items.filter { it.id in failedIds && !isTrulyBlankSubtitle(it) }
         stopActiveJob()
         runBatch(subtitleDoc, voice, threadCount, subMode, items, true, onCompleted)
     }
@@ -114,22 +117,16 @@ class TtsGenerationManager(private val context: Context) {
         subtitleDoc: SubtitleDocument,
         voice: VoiceItem,
         itemId: Int,
-        editedText: String,
+        editedText: String? = null,
         threadCount: Int = 50,
         subMode: String = "translated",
         onCompleted: (() -> Unit)? = null
     ) {
         val item = subtitleDoc.items.firstOrNull { it.id == itemId } ?: return
-        applyEditedTexts(subtitleDoc, mapOf(itemId to editedText), subMode)
-        if (!isPronounceable(textFor(item, subMode))) {
-            _progress.update { state ->
-                state.copy(
-                    errorMessage = "Câu #$itemId chỉ chứa dấu câu hoặc rỗng, không thể phát âm",
-                    currentSentence = "Câu #$itemId không thể phát âm"
-                )
-            }
-            return
+        if (editedText != null) {
+            applyEditedTexts(subtitleDoc, mapOf(itemId to editedText), subMode)
         }
+        if (isTrulyBlankSubtitle(item)) return
         stopActiveJob()
         runBatch(subtitleDoc, voice, threadCount, subMode, listOf(item), true, onCompleted)
     }
@@ -215,9 +212,12 @@ class TtsGenerationManager(private val context: Context) {
                         val destFile = File(cacheDir, "sub_${item.id}.mp3")
 
                         if (!isPronounceable(text)) {
-                            // Câu chỉ chứa ký tự dấu câu / không phát âm được -> bỏ qua không gọi CapCut API
+                            // Câu chỉ chứa ký tự dấu câu / không phát âm được -> không gọi CapCut API tránh lỗi HTTP 400
                             item.audioFilePath = null
                             item.audioDurationMs = 0L
+                            if (!isTrulyBlankSubtitle(item)) {
+                                failureReasons[item.id] = "Bản dịch bị nuốt/chỉ chứa dấu câu (${text.ifBlank { "trống" }})"
+                            }
                             processedCounter.incrementAndGet()
                             continue
                         }
@@ -292,16 +292,21 @@ class TtsGenerationManager(private val context: Context) {
         val failedItems = audit.issues.mapNotNull { issue ->
             val item = subtitleDoc.items.firstOrNull { it.id == issue.itemId } ?: return@mapNotNull null
             val text = textFor(item, subMode)
-            if (!isPronounceable(text)) return@mapNotNull null
+            if (isTrulyBlankSubtitle(item)) return@mapNotNull null
+            val reason = if (!isPronounceable(text)) {
+                "Bản dịch bị nuốt/chỉ chứa dấu câu (${text.ifBlank { "trống" }})"
+            } else {
+                failureReasons[item.id] ?: issue.reason
+            }
             TtsFailedItem(
                 itemId = item.id,
-                text = text,
-                reason = failureReasons[item.id] ?: issue.reason,
+                text = text.ifBlank { item.originalText },
+                reason = reason,
                 filePath = issue.filePath
             )
         }.sortedBy { it.itemId }
 
-        val validTargetCount = subtitleDoc.items.count { isPronounceable(textFor(it, subMode)) }
+        val validTargetCount = subtitleDoc.items.count { !isTrulyBlankSubtitle(it) }
         val successCount = validTargetCount - failedItems.size
         val message = if (failedItems.isEmpty()) {
             "Đã hoàn thành lồng tiếng toàn bộ $successCount câu thoại!"

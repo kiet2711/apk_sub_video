@@ -290,22 +290,84 @@ class GeminiTranslator(
             sbFormatSrt(srtInput, i + 1, it.formatSrtTimecode(), it.originalText)
         }
 
+        val prompt = """
+            [NỘI DUNG BẮT BUỘC DỊCH SANG TIẾNG VIỆT 100% CÁC KHỐI PHỤ ĐỀ DƯỚI ĐÂY (PHIÊN ÂM TẤT CẢ HỌ TÊN NHÂN VẬT SANG HÁN VIỆT HOÀN TOÀN, TUYỆT ĐỐI KHÔNG ĐỂ SÓT CHỮ HÁN, TUYỆT ĐỐI KHÔNG ĐƯỢC NUỐT CÂU)]:
+
+            $srtInput
+        """.trimIndent()
+
         var lastError: Exception? = null
         val attempts = maxRetries.coerceAtLeast(apiKeys.size)
         for (attempt in 0 until attempts) {
             val key = getNextApiKey()
             try {
-                val rawResponse = callGeminiRestApi(srtInput.toString(), systemPrompt, key)
+                val rawResponse = callGeminiRestApi(prompt, systemPrompt, key)
                 val parsedItems = SubtitleDocument.parseSrt(rawResponse).items
 
-                if (parsedItems.size == items.size) {
-                    return parsedItems.map { it.originalText }
-                } else if (parsedItems.isNotEmpty()) {
-                    val result = mutableListOf<String>()
-                    for (i in items.indices) {
-                        result.add(parsedItems.getOrNull(i)?.originalText ?: items[i].originalText)
+                if (parsedItems.isNotEmpty()) {
+                    val translatedResults = Array(items.size) { "" }
+                    val usedParsedIndices = mutableSetOf<Int>()
+
+                    // Tầng 1: Khớp chính xác theo ID (1-based index)
+                    for (idx in items.indices) {
+                        val targetLocalId = idx + 1
+                        val pIdx = parsedItems.indexOfFirst { it.id == targetLocalId && it !in usedParsedIndices.map { u -> parsedItems[u] } }
+                        if (pIdx != -1) {
+                            usedParsedIndices.add(pIdx)
+                            translatedResults[idx] = parsedItems[pIdx].originalText
+                        }
                     }
-                    return result
+
+                    // Tầng 2: Khớp theo Timecode
+                    for (idx in items.indices) {
+                        if (translatedResults[idx].isNotBlank()) continue
+                        val itemTc = items[idx].formatSrtTimecode().replace(" ", "").replace(".", ",")
+                        val pIdx = parsedItems.indexOfFirst { p ->
+                            p !in usedParsedIndices.map { u -> parsedItems[u] } &&
+                            p.formatSrtTimecode().replace(" ", "").replace(".", ",") == itemTc
+                        }
+                        if (pIdx != -1) {
+                            usedParsedIndices.add(pIdx)
+                            translatedResults[idx] = parsedItems[pIdx].originalText
+                        }
+                    }
+
+                    // Tầng 3: Khớp tuần tự theo danh sách còn sót lại
+                    var unusedIdx = 0
+                    for (idx in items.indices) {
+                        if (translatedResults[idx].isNotBlank()) continue
+                        while (unusedIdx < parsedItems.size && unusedIdx in usedParsedIndices) {
+                            unusedIdx++
+                        }
+                        if (unusedIdx < parsedItems.size) {
+                            usedParsedIndices.add(unusedIdx)
+                            translatedResults[idx] = parsedItems[unusedIdx].originalText
+                            unusedIdx++
+                        }
+                    }
+
+                    // Tầng 4: Kiểm tra và cứu các câu bị nuốt hoặc biến thành dấu câu
+                    for (idx in items.indices) {
+                        val trans = translatedResults[idx].trim()
+                        val orig = items[idx].originalText.trim()
+                        // Nếu câu gốc có chữ nhưng bản dịch bị nuốt (trống hoặc chỉ chứa dấu câu như ., ?, !)
+                        if (orig.any { it.isLetterOrDigit() } && !trans.any { it.isLetterOrDigit() }) {
+                            try {
+                                val single = translateSingleTextInternal(orig, systemPrompt)
+                                if (single.any { it.isLetterOrDigit() }) {
+                                    translatedResults[idx] = single
+                                } else {
+                                    translatedResults[idx] = orig
+                                }
+                            } catch (_: Exception) {
+                                translatedResults[idx] = orig
+                            }
+                        } else if (trans.isBlank()) {
+                            translatedResults[idx] = orig
+                        }
+                    }
+
+                    return translatedResults.toList()
                 }
             } catch (e: Exception) {
                 lastError = e
@@ -391,11 +453,12 @@ class GeminiTranslator(
         val srtRules = if (isSrt) {
             """
 
-            QUY TẮC BẢO TOÀN CẤU TRÚC PHỤ ĐỀ SRT:
-            1. Đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
-            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000).
-            3. Dưới mỗi timecode CHỈ ĐƯỢC ghi bản dịch ở ngôn ngữ đích. TUYỆT ĐỐI KHÔNG lặp lại câu gốc, không xuất song ngữ.
-            4. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch" hoặc giải thích ngoài định dạng SRT chuẩn.
+            QUY TẮC BẮT BUỘC ĐỂ KHÔNG BỊ DỊCH THIẾU HOẶC MẤT DÒNG PHỤ ĐỀ:
+            1. TUYỆT ĐỐI BẢO TOÀN 100% CẤU TRÚC SRT: Đầu vào có bao nhiêu khối phụ đề (ID từ 1 đến N), đầu ra BẮT BUỘC PHẢI CÓ ĐỦ CHÍNH XÁC bấy nhiêu khối.
+            2. Giữ nguyên số thứ tự ID và dòng Timecode (00:00:00,000 --> 00:00:00,000). Dưới mỗi timecode là ĐÚNG 1 bản dịch tiếng Việt tương ứng.
+            3. TUYỆT ĐỐI KHÔNG TỰ Ý THAY THẾ CÂU THOẠI BẰNG DẤU CHẤM (.), DẤU HỎI (?) HOẶC DẤU BA CHẤM (...). Dù câu thoại gốc ngắn chỉ 1-2 từ hay thán từ (như '啊', '嗯', '哈', '谁?', '你...') cũng BẮT BUỘC PHẢI DỊCH ĐẦY ĐỦ THÀNH LỜI THOẠI TIẾNG VIỆT (ví dụ: 'A!', 'Ừ.', 'Hả?', 'Ai đấy?', 'Anh...'). TUYỆT ĐỐI KHÔNG ĐƯỢC NUỐT CÂU.
+            4. KHÔNG gộp 2 khối phụ đề thành 1, KHÔNG bỏ qua bất kỳ khối phụ đề nào.
+            5. KHÔNG thêm lời chào, nhãn "bản gốc/bản dịch" hoặc giải thích ngoài định dạng SRT chuẩn.
             """.trimIndent()
         } else ""
 

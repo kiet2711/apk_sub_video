@@ -123,12 +123,12 @@ data class SubtitleDocument(
                 .replace("\r", "\n")
                 .trim()
 
-            val blocks = cleaned.split(Regex("\n\\s*\n"))
+            // Thử cách 1: Tách theo khối chuẩn \n\s*\n
+            val blocks = cleaned.split(Regex("\n\\s*\n+"))
             for (block in blocks) {
                 val lines = block.lines().map { it.trim() }.filter { it.isNotBlank() }
                 if (lines.isEmpty()) continue
 
-                // Tìm dòng chứa "-->"
                 val timecodeLineIndex = lines.indexOfFirst { it.contains("-->") }
                 if (timecodeLineIndex == -1) continue
 
@@ -142,7 +142,8 @@ data class SubtitleDocument(
                 val textLines = lines.subList(timecodeLineIndex + 1, lines.size)
                 val text = textLines.joinToString("\n").trim()
 
-                val id = lines.getOrNull(0)?.toIntOrNull() ?: (list.size + 1)
+                val rawId = lines.getOrNull(0)?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+                val id = if (timecodeLineIndex > 0) rawId ?: (list.size + 1) else (list.size + 1)
                 list.add(
                     SubtitleItem(
                         id = id,
@@ -153,6 +154,57 @@ data class SubtitleDocument(
                     )
                 )
             }
+
+            // Nếu số khối tìm được ít hơn hẳn số lượng timecode xuất hiện (do AI ngắt bằng 1 dấu \n)
+            val timecodeMatches = Regex("""\d{1,2}:\d{1,2}:\d{1,2}(?:[,\.]\d{1,3})?\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}(?:[,\.]\d{1,3})?""").findAll(cleaned).toList()
+            if (list.size < timecodeMatches.size && timecodeMatches.isNotEmpty()) {
+                list.clear()
+                val lines = cleaned.lines()
+                var currentId = 1
+                var currentTimecode: String? = null
+                val currentTextLines = mutableListOf<String>()
+
+                fun pushCurrent() {
+                    val tc = currentTimecode ?: return
+                    val parts = tc.split(Regex("\\s*-->\\s*"))
+                    if (parts.size == 2) {
+                        val startMs = parseSrtTimestamp(parts[0])
+                        val endMs = parseSrtTimestamp(parts[1])
+                        val text = currentTextLines.joinToString("\n").trim()
+                        list.add(
+                            SubtitleItem(
+                                id = currentId,
+                                startMs = startMs,
+                                endMs = endMs,
+                                originalText = text,
+                                translatedText = text
+                            )
+                        )
+                    }
+                    currentTextLines.clear()
+                }
+
+                for (line in lines) {
+                    val trimmed = line.trim()
+                    if (trimmed.contains("-->") && trimmed.matches(Regex(""".*\d{1,2}:\d{1,2}:\d{1,2}.*-->.*\d{1,2}:\d{1,2}:\d{1,2}.*"""))) {
+                        // Nếu trước dòng timecode này có 1 dòng số ID
+                        val possibleId = currentTextLines.lastOrNull()?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+                        if (possibleId != null && currentTextLines.isNotEmpty()) {
+                            currentTextLines.removeAt(currentTextLines.size - 1)
+                            pushCurrent()
+                            currentId = possibleId
+                        } else {
+                            pushCurrent()
+                            currentId = list.size + 1
+                        }
+                        currentTimecode = trimmed
+                    } else if (currentTimecode != null) {
+                        currentTextLines.add(trimmed)
+                    }
+                }
+                pushCurrent()
+            }
+
             val doc = SubtitleDocument(list)
             doc.reindex()
             return doc

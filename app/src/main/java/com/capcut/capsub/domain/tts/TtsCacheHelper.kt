@@ -153,11 +153,11 @@ object TtsCacheHelper {
                 item.audioDurationMs = 0L
                 item.playbackSpeed = 1.0f
                 val displayText = item.getDisplayText()
-                if (displayText.any { it.isLetterOrDigit() }) {
+                if (item.originalText.any { it.isLetterOrDigit() } || displayText.any { it.isLetterOrDigit() }) {
                     issues.add(
                         CacheIssue(
                             itemId = item.id,
-                            text = displayText,
+                            text = displayText.ifBlank { item.originalText },
                             reason = validation.reason,
                             filePath = file.absolutePath
                         )
