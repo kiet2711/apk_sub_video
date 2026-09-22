@@ -70,6 +70,8 @@ fun SettingsScreen(
     var threadCount by remember { mutableStateOf(repo.geminiThreadCount.toFloat()) }
     var fontSize by remember { mutableStateOf(repo.subtitleFontSizeSp) }
     var blackBoxOpacity by remember { mutableStateOf(repo.blackBoxOpacity) }
+    var downloadThreadCount by remember { mutableFloatStateOf(repo.downloadThreadCount.toFloat()) }
+    var bilibiliSessData by remember { mutableStateOf(repo.bilibiliSessData) }
 
     Scaffold(
         topBar = {
@@ -185,7 +187,67 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 5. THÔNG TIN ỨNG DỤNG & CẬP NHẬT GITHUB
+            // 5. CẤU HÌNH TẢI VIDEO ONLINE & BILIBILI VIP
+            Text(
+                text = "TẢI VIDEO ONLINE & BILIBILI VIP",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = PrimaryEmerald,
+                letterSpacing = 1.sp
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "SỐ LUỒNG TẢI SONG SONG: ${downloadThreadCount.toInt()} LUỒNG",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Text(
+                text = "Tải đa luồng song song luân phiên qua các cụm máy chủ CDN (Tencent, Alibaba, Huawei, Bilibili) giúp tăng tốc độ tải lên gấp 5-10 lần (Khuyên dùng: 12 - 24 luồng).",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            Slider(
+                value = downloadThreadCount,
+                onValueChange = { downloadThreadCount = it },
+                valueRange = 8f..32f,
+                steps = 23
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Text(
+                text = "BILIBILI COOKIE (SESSDATA):",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+            Text(
+                text = "Nhập mã SESSDATA tài khoản Bilibili để mở khóa xem và tải chất lượng cao 1080P+, 4K và các video giới hạn VIP.",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = bilibiliSessData,
+                onValueChange = { bilibiliSessData = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Dán SESSDATA hoặc toàn bộ Cookie...", color = Color.Gray) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = DarkSurface,
+                    unfocusedContainerColor = DarkSurface,
+                    focusedBorderColor = PrimaryEmerald,
+                    unfocusedBorderColor = Color(0xFF333544),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                shape = RoundedCornerShape(10.dp)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 6. THÔNG TIN ỨNG DỤNG & CẬP NHẬT GITHUB
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -249,7 +311,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // 6. LƯU CÀI ĐẶT
+            // 7. LƯU CÀI ĐẶT
             Button(
                 onClick = {
                     val keyList = keysText.split(",", ";", "\n").map { it.trim() }.filter { it.isNotBlank() }
@@ -257,6 +319,8 @@ fun SettingsScreen(
                     repo.geminiThreadCount = threadCount.toInt()
                     repo.subtitleFontSizeSp = fontSize
                     repo.blackBoxOpacity = blackBoxOpacity
+                    repo.downloadThreadCount = downloadThreadCount.toInt()
+                    repo.bilibiliSessData = bilibiliSessData
                     Toast.makeText(context, "Đã lưu cài đặt thành công!", Toast.LENGTH_SHORT).show()
                     onBack()
                 },

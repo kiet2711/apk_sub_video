@@ -26,13 +26,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,18 +53,24 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.capcut.capsub.domain.media.NetworkHeaderHelper
+import com.capcut.capsub.domain.media.RemoteAudioFetcher
+import kotlinx.coroutines.launch
 import com.capcut.capsub.ui.theme.CardBorder
 import com.capcut.capsub.ui.theme.DarkBackground
 import com.capcut.capsub.ui.theme.DarkSurface
@@ -143,6 +155,61 @@ fun HomeScreen(
         }
     }
 
+    var inputMode by remember { mutableIntStateOf(0) } // 0: File máy, 1: Link video online
+    var inputUrlText by remember { mutableStateOf("") }
+    var isProbingUrl by remember { mutableStateOf(false) }
+    var probeStatusMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
+
+    fun processUrl(urlToTest: String) {
+        val cleanUrl = NetworkHeaderHelper.extractCleanUrl(urlToTest)
+
+        if (cleanUrl.isBlank() || !NetworkHeaderHelper.isRemoteUrl(cleanUrl)) {
+            probeStatusMessage = "⚠️ Vui lòng nhập đường link hợp lệ (http://, https:// hoặc link Bilibili/b23.tv)"
+            return
+        }
+
+        inputUrlText = cleanUrl
+        isProbingUrl = true
+        probeStatusMessage = "⏳ Đang kết nối và phân tích thông tin video..."
+        coroutineScope.launch {
+            try {
+                val sessData = repo.bilibiliSessData
+                val info = kotlinx.coroutines.withTimeoutOrNull(10000L) {
+                    RemoteAudioFetcher.probeRemoteVideo(cleanUrl, sessData)
+                }
+                selectedUri = Uri.parse(cleanUrl)
+                if (info != null) {
+                    fileName = info.title
+                    fileDurationMs = info.durationMs
+                    fileSizeMb = if (info.sizeBytes > 0) {
+                        "%.1f MB (Audio)".format(info.sizeBytes / (1024.0 * 1024.0))
+                    } else "Trực tuyến"
+
+                    probeStatusMessage = when {
+                        info.hasExistingSubtitles -> "✨ Video có sẵn phụ đề Bilibili! Bấm 'Bắt đầu' để nạp và dịch ngay."
+                        info.isBilibili -> "✅ Đã tìm thấy audio DASH Bilibili (~30-50MB). Sẵn sàng tạo sub!"
+                        else -> "✅ Video online đã sẵn sàng!"
+                    }
+                } else {
+                    fileName = NetworkHeaderHelper.getSuggestedTitle(cleanUrl)
+                    fileDurationMs = 0L
+                    fileSizeMb = "Trực tuyến"
+                    probeStatusMessage = "✅ Đã nhận link video (sẵn sàng tạo sub & xem)"
+                }
+            } catch (e: Exception) {
+                selectedUri = Uri.parse(cleanUrl)
+                fileName = NetworkHeaderHelper.getSuggestedTitle(cleanUrl)
+                fileDurationMs = 0L
+                fileSizeMb = "Trực tuyến"
+                probeStatusMessage = "✅ Đã nhận link (sẵn sàng tạo sub & xem)"
+            } finally {
+                isProbingUrl = false
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -181,48 +248,292 @@ fun HomeScreen(
         ) {
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 1. CARD CHỌN FILE
-            Card(
+            // 1. NGUỒN VIDEO: TABS CHUYỂN ĐỔI (FILE MÁY / NHẬP LINK)
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(16.dp))
-                    .clickable {
-                        filePicker.launch(arrayOf("video/*", "audio/*"))
-                    },
-                colors = CardDefaults.cardColors(containerColor = DarkSurface)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DarkSurface)
+                    .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(12.dp))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Column(
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (inputMode == 0) PrimaryEmerald else Color.Transparent)
+                        .clickable {
+                            inputMode = 0
+                            if (selectedUri != null && NetworkHeaderHelper.isRemoteUri(selectedUri)) {
+                                selectedUri = null
+                                fileName = ""
+                                fileDurationMs = 0L
+                                fileSizeMb = ""
+                            }
+                        }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.VideoFile,
+                            contentDescription = null,
+                            tint = if (inputMode == 0) Color.Black else Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "📁 File Trên Máy",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (inputMode == 0) Color.Black else Color.Gray
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (inputMode == 1) PrimaryEmerald else Color.Transparent)
+                        .clickable {
+                            inputMode = 1
+                            if (selectedUri != null && !NetworkHeaderHelper.isRemoteUri(selectedUri)) {
+                                selectedUri = null
+                                fileName = ""
+                                fileDurationMs = 0L
+                                fileSizeMb = ""
+                            }
+                        }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Link,
+                            contentDescription = null,
+                            tint = if (inputMode == 1) Color.Black else Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "🔗 Nhập Link Video",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (inputMode == 1) Color.Black else Color.Gray
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (inputMode == 0) {
+                // CARD CHỌN FILE TỪ THIẾT BỊ
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.VideoFile,
-                        contentDescription = null,
-                        tint = PrimaryEmerald,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = if (selectedUri != null) fileName else "Chạm để chọn Video hoặc Âm thanh",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = if (selectedUri != null) {
-                            val mins = (fileDurationMs / 1000) / 60
-                            val secs = (fileDurationMs / 1000) % 60
-                            "⏱️ %02d:%02d  •  💾 %s".format(mins, secs, fileSizeMb)
-                        } else {
-                            "Hỗ trợ MP4, MKV, MOV, MP3, M4A"
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(16.dp))
+                        .clickable {
+                            filePicker.launch(arrayOf("video/*", "audio/*"))
                         },
-                        fontSize = 13.sp,
-                        color = Color.Gray
-                    )
+                    colors = CardDefaults.cardColors(containerColor = DarkSurface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VideoFile,
+                            contentDescription = null,
+                            tint = PrimaryEmerald,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = if (selectedUri != null) fileName else "Chạm để chọn Video hoặc Âm thanh",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = if (selectedUri != null) {
+                                val mins = (fileDurationMs / 1000) / 60
+                                val secs = (fileDurationMs / 1000) % 60
+                                "⏱️ %02d:%02d  •  💾 %s".format(mins, secs, fileSizeMb)
+                            } else {
+                                "Hỗ trợ MP4, MKV, MOV, MP3, M4A"
+                            },
+                            fontSize = 13.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            } else {
+                // CARD NHẬP LINK VIDEO ONLINE
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(BorderStroke(1.dp, CardBorder), RoundedCornerShape(16.dp)),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                tint = PrimaryEmerald,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Dán Link Video Trực Tiếp",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Hỗ trợ link Bilibili, Douyin, MP4, M3U8... (Tự động vượt chặn 403)",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = inputUrlText,
+                            onValueChange = {
+                                inputUrlText = it
+                                probeStatusMessage = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("https://.../video.mp4", color = Color.Gray, fontSize = 13.sp) },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = PrimaryEmerald,
+                                unfocusedBorderColor = CardBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            trailingIcon = {
+                                if (inputUrlText.isNotBlank()) {
+                                    IconButton(onClick = {
+                                        inputUrlText = ""
+                                        selectedUri = null
+                                        fileName = ""
+                                        fileDurationMs = 0L
+                                        probeStatusMessage = null
+                                    }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = Color.Gray)
+                                    }
+                                }
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val clip = clipboardManager.getText()?.text?.trim() ?: ""
+                                    if (clip.isNotBlank()) {
+                                        inputUrlText = clip
+                                        processUrl(clip)
+                                    } else {
+                                        probeStatusMessage = "Khay nhớ tạm trống"
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A))
+                            ) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Dán Link", color = Color.White, fontSize = 13.sp)
+                            }
+
+                            Button(
+                                onClick = { processUrl(inputUrlText) },
+                                modifier = Modifier.weight(1f),
+                                enabled = inputUrlText.isNotBlank() && !isProbingUrl,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald)
+                            ) {
+                                if (isProbingUrl) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Đang kiểm tra...", color = Color.Black, fontSize = 13.sp)
+                                } else {
+                                    Icon(Icons.Default.Search, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Kiểm Tra Link", color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        if (!probeStatusMessage.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = probeStatusMessage!!,
+                                fontSize = 12.sp,
+                                color = if (selectedUri != null) PrimaryEmerald else Color(0xFFFFB74D)
+                            )
+                        }
+
+                        // Preview khi video đã sẵn sàng
+                        if (selectedUri != null && NetworkHeaderHelper.isRemoteUri(selectedUri)) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF1E2E24))
+                                    .border(BorderStroke(1.dp, PrimaryEmerald.copy(alpha = 0.5f)), RoundedCornerShape(10.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = PrimaryEmerald, modifier = Modifier.size(28.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = fileName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 14.sp,
+                                            color = Color.White
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        val mins = (fileDurationMs / 1000) / 60
+                                        val secs = (fileDurationMs / 1000) % 60
+                                        val durText = if (fileDurationMs > 0) "%02d:%02d".format(mins, secs) else "Tự động"
+                                        Text(
+                                            text = "⏱️ Thời lượng: $durText  •  🌐 Stream trực tiếp",
+                                            fontSize = 12.sp,
+                                            color = PrimaryEmerald
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

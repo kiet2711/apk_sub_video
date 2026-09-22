@@ -90,4 +90,12 @@ class SettingsRepository(context: Context) {
     var aiAudioVolume: Float
         get() = prefs.getFloat("ai_audio_volume", 1.0f).coerceIn(0f, 1f)
         set(value) = prefs.edit().putFloat("ai_audio_volume", value.coerceIn(0f, 1f)).apply()
+
+    var downloadThreadCount: Int
+        get() = prefs.getInt("download_thread_count", 16).coerceIn(8, 32)
+        set(value) = prefs.edit().putInt("download_thread_count", value.coerceIn(8, 32)).apply()
+
+    var bilibiliSessData: String
+        get() = prefs.getString("bilibili_sessdata", "") ?: ""
+        set(value) = prefs.edit().putString("bilibili_sessdata", value.trim()).apply()
 }

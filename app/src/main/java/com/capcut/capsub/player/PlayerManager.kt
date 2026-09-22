@@ -4,7 +4,11 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.capcut.capsub.domain.media.NetworkHeaderHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,11 +46,27 @@ class PlayerManager(private val context: Context) {
         exoPlayer = null
         ttsAudioScheduler.initializePlayers()
 
-        val player = ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUri))
-            volume = originalVolume.coerceIn(0f, 1f)
-            prepare()
-            playWhenReady = true
+        val isRemote = NetworkHeaderHelper.isRemoteUri(videoUri)
+        val mediaSourceFactory = if (isRemote) {
+            val settings = com.capcut.capsub.data.repository.SettingsRepository(context)
+            val headers = NetworkHeaderHelper.getHeadersForUri(videoUri, settings.bilibiliSessData)
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent(headers["User-Agent"] ?: NetworkHeaderHelper.DEFAULT_USER_AGENT)
+                .setAllowCrossProtocolRedirects(true)
+                .setDefaultRequestProperties(headers)
+            val upstreamFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
+            DefaultMediaSourceFactory(upstreamFactory)
+        } else {
+            DefaultMediaSourceFactory(context)
+        }
+
+        val player = ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(videoUri))
+                volume = originalVolume.coerceIn(0f, 1f)
+                prepare()
+                playWhenReady = true
 
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {

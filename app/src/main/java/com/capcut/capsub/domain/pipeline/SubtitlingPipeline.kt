@@ -10,7 +10,11 @@ import com.capcut.capsub.data.model.DeviceConfig
 import com.capcut.capsub.data.model.ProcessProgress
 import com.capcut.capsub.data.model.ProcessStage
 import com.capcut.capsub.data.model.SubtitleDocument
+import com.capcut.capsub.data.repository.SettingsRepository
 import com.capcut.capsub.domain.media.AudioChunker
+import com.capcut.capsub.domain.media.BilibiliResolver
+import com.capcut.capsub.domain.media.NetworkHeaderHelper
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -62,131 +66,174 @@ class SubtitlingPipeline(
             isCancelled = false
             checkCancelled()
 
-            // -----------------------------------------------------------------
-            // BƯỚC 1: TRÍCH XUẤT / CẮT ÂM THANH M4A
-            // -----------------------------------------------------------------
-            _progressFlow.value = ProcessProgress(
-                stage = ProcessStage.EXTRACTING_AUDIO,
-                progress = 0.05f,
-                message = "Đang tách luồng âm thanh từ video..."
-            )
+            var allSubtitles: SubtitleDocument? = null
 
-            val chunkList = AudioChunker.sliceMedia(
-                context = context,
-                videoUri = videoUri,
-                totalDurationMs = totalDurationMs,
-                tempDir = sessionDir,
-                chunkDurationSec = 600L
-            ) { pct, msg ->
+            // -----------------------------------------------------------------
+            // BƯỚC 0: KIỂM TRA PHỤ ĐỀ CÓ SẴN (NẾU LÀ LINK BILIBILI ONLINE)
+            // -----------------------------------------------------------------
+            val urlStr = videoUri.toString()
+            if (NetworkHeaderHelper.isRemoteUri(videoUri) && BilibiliResolver.isBilibiliUrl(urlStr)) {
+                try {
+                    _progressFlow.value = ProcessProgress(
+                        stage = ProcessStage.EXTRACTING_AUDIO,
+                        progress = 0.05f,
+                        message = "Đang kiểm tra phụ đề Bilibili có sẵn..."
+                    )
+                    val settings = SettingsRepository(context)
+                    val target = BilibiliResolver.resolveUrl(urlStr)
+                    if (!target.bvid.isNullOrBlank() || !target.aid.isNullOrBlank()) {
+                        val details = BilibiliResolver.getVideoDetails(target, settings.bilibiliSessData)
+                        val subs = BilibiliResolver.getSubtitles(details.bvid, details.cid, settings.bilibiliSessData)
+                        val bestSub = subs.firstOrNull { !it.isAi } ?: subs.firstOrNull()
+                        if (bestSub != null) {
+                            _progressFlow.value = ProcessProgress(
+                                stage = ProcessStage.EXTRACTING_AUDIO,
+                                progress = 0.15f,
+                                message = "Đã tìm thấy phụ đề gốc (${bestSub.lanDoc}), nạp trực tiếp..."
+                            )
+                            val subDoc = BilibiliResolver.downloadSubtitleAsDocument(bestSub.subtitleUrl)
+                            if (subDoc != null && subDoc.items.isNotEmpty()) {
+                                subDoc.reindex()
+                                allSubtitles = subDoc
+                                Log.i("SubtitlingPipeline", "Nạp thành công ${subDoc.items.size} câu phụ đề có sẵn từ Bilibili!")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SubtitlingPipeline", "Không lấy được phụ đề Bilibili có sẵn: ${e.message}")
+                }
+            }
+
+            // Nếu chưa có phụ đề có sẵn, tiến hành bóc tách âm thanh và nhận diện STT
+            if (allSubtitles == null || allSubtitles.isEmpty) {
+                // -----------------------------------------------------------------
+                // BƯỚC 1: TRÍCH XUẤT / CẮT ÂM THANH M4A
+                // -----------------------------------------------------------------
                 _progressFlow.value = ProcessProgress(
                     stage = ProcessStage.EXTRACTING_AUDIO,
-                    progress = 0.05f + pct * 0.15f,
-                    message = msg
+                    progress = 0.05f,
+                    message = "Đang tách luồng âm thanh từ video..."
                 )
-            }
 
-            checkCancelled()
-
-            // -----------------------------------------------------------------
-            // BƯỚC 2 & 3: TẢI LÊN CAPCUT VOD & NHẬN DIỆN GIỌNG NÓI (STT) - ĐA LUỒNG
-            // -----------------------------------------------------------------
-            val numChunks = chunkList.size
-            val useCapcutTrans = (translationEngine == "capcut")
-            _progressFlow.value = ProcessProgress(
-                stage = ProcessStage.UPLOADING_VOD,
-                progress = 0.20f,
-                message = if (numChunks > 1) "Đang khởi chạy đa luồng cho $numChunks phân đoạn..." else "Đang tải lên CapCut Cloud..."
-            )
-
-            val semaphore = Semaphore(3) // Tối đa 3 phân đoạn xử lý đồng thời
-            val chunkProgressMap = ConcurrentHashMap<Int, Float>()
-            val chunkStatusMap = ConcurrentHashMap<Int, String>()
-
-            fun updateCombinedProgress() {
-                val totalProgress = chunkProgressMap.values.sum() / numChunks.coerceAtLeast(1)
-                val overall = 0.20f + totalProgress * 0.50f // Đi từ 20% đến 70%
-                val statusOverview = if (numChunks > 1) {
-                    chunkStatusMap.entries.sortedBy { it.key }
-                        .joinToString(" | ") { "P${it.key + 1}: ${it.value}" }
-                } else {
-                    chunkStatusMap[0] ?: "Đang xử lý..."
+                val chunkList = AudioChunker.sliceMedia(
+                    context = context,
+                    videoUri = videoUri,
+                    totalDurationMs = totalDurationMs,
+                    tempDir = sessionDir,
+                    chunkDurationSec = 600L
+                ) { pct, msg ->
+                    _progressFlow.value = ProcessProgress(
+                        stage = ProcessStage.EXTRACTING_AUDIO,
+                        progress = 0.05f + pct * 0.15f,
+                        message = msg
+                    )
                 }
-                val currentStage = if (totalProgress >= 0.40f) ProcessStage.STT_TRANSCRIBING else ProcessStage.UPLOADING_VOD
+
+                checkCancelled()
+
+                // -----------------------------------------------------------------
+                // BƯỚC 2 & 3: TẢI LÊN CAPCUT VOD & NHẬN DIỆN GIỌNG NÓI (STT) - ĐA LUỒNG
+                // -----------------------------------------------------------------
+                val numChunks = chunkList.size
+                val useCapcutTrans = (translationEngine == "capcut")
                 _progressFlow.value = ProcessProgress(
-                    stage = currentStage,
-                    progress = overall.coerceIn(0.20f, 0.70f),
-                    message = statusOverview
+                    stage = ProcessStage.UPLOADING_VOD,
+                    progress = 0.20f,
+                    message = if (numChunks > 1) "Đang khởi chạy đa luồng cho $numChunks phân đoạn..." else "Đang tải lên CapCut Cloud..."
                 )
-            }
 
-            // Khởi tạo trạng thái ban đầu cho các chunk
-            for (i in 0 until numChunks) {
-                chunkProgressMap[i] = 0f
-                chunkStatusMap[i] = "Chờ xử lý"
-            }
+                val semaphore = Semaphore(3) // Tối đa 3 phân đoạn xử lý đồng thời
+                val chunkProgressMap = ConcurrentHashMap<Int, Float>()
+                val chunkStatusMap = ConcurrentHashMap<Int, String>()
 
-            val deferredResults = coroutineScope {
-                chunkList.mapIndexed { idx, chunk ->
-                    async(Dispatchers.IO) {
-                        semaphore.withPermit {
-                            checkCancelled()
+                fun updateCombinedProgress() {
+                    val totalProgress = chunkProgressMap.values.sum() / numChunks.coerceAtLeast(1)
+                    val overall = 0.20f + totalProgress * 0.50f // Đi từ 20% đến 70%
+                    val statusOverview = if (numChunks > 1) {
+                        chunkStatusMap.entries.sortedBy { it.key }
+                            .joinToString(" | ") { "P${it.key + 1}: ${it.value}" }
+                    } else {
+                        chunkStatusMap[0] ?: "Đang xử lý..."
+                    }
+                    val currentStage = if (totalProgress >= 0.40f) ProcessStage.STT_TRANSCRIBING else ProcessStage.UPLOADING_VOD
+                    _progressFlow.value = ProcessProgress(
+                        stage = currentStage,
+                        progress = overall.coerceIn(0.20f, 0.70f),
+                        message = statusOverview
+                    )
+                }
 
-                            // Mỗi luồng worker sở hữu một DeviceConfig ngẫu nhiên độc lập
-                            val workerDevice = DeviceConfig().randomize()
-                            val workerUploader = CapCutVodUploader(device = workerDevice)
-                            val workerSttClient = CapCutSttClient(device = workerDevice)
+                // Khởi tạo trạng thái ban đầu cho các chunk
+                for (i in 0 until numChunks) {
+                    chunkProgressMap[i] = 0f
+                    chunkStatusMap[i] = "Chờ xử lý"
+                }
 
-                            // 1. Tải lên VOD
-                            chunkStatusMap[idx] = "Đang tải..."
-                            updateCombinedProgress()
+                val deferredResults = coroutineScope {
+                    chunkList.mapIndexed { idx, chunk ->
+                        async(Dispatchers.IO) {
+                            semaphore.withPermit {
+                                checkCancelled()
 
-                            val uploadResult = workerUploader.uploadFile(chunk.file) { pct, msg ->
-                                chunkProgressMap[idx] = pct * 0.40f
-                                chunkStatusMap[idx] = "Tải ${(pct * 100).toInt()}%"
+                                // Mỗi luồng worker sở hữu một DeviceConfig ngẫu nhiên độc lập
+                                val workerDevice = DeviceConfig().randomize()
+                                val workerUploader = CapCutVodUploader(device = workerDevice)
+                                val workerSttClient = CapCutSttClient(device = workerDevice)
+
+                                // 1. Tải lên VOD
+                                chunkStatusMap[idx] = "Đang tải..."
                                 updateCombinedProgress()
-                            }
 
-                            checkCancelled()
+                                val uploadResult = workerUploader.uploadFile(chunk.file) { pct, msg ->
+                                    chunkProgressMap[idx] = pct * 0.40f
+                                    chunkStatusMap[idx] = "Tải ${(pct * 100).toInt()}%"
+                                    updateCombinedProgress()
+                                }
 
-                            // 2. Nhận diện giọng nói STT
-                            chunkProgressMap[idx] = 0.40f
-                            chunkStatusMap[idx] = if (useCapcutTrans) "CapCut dịch..." else "Đang STT..."
-                            updateCombinedProgress()
+                                checkCancelled()
 
-                            val chunkDuration = if (chunk.durationMs > 0) chunk.durationMs else uploadResult.durationMs
-                            val chunkDoc = workerSttClient.transcribeAudio(
-                                audioVid = uploadResult.vid,
-                                audioMd5 = uploadResult.md5,
-                                durationMs = chunkDuration,
-                                language = sourceLanguage,
-                                useTranslation = useCapcutTrans,
-                                translationLanguage = targetLanguage,
-                                timeOffsetMs = chunk.startMs
-                            ) { pct, msg ->
-                                chunkProgressMap[idx] = 0.40f + pct * 0.60f
-                                chunkStatusMap[idx] = if (useCapcutTrans) "Dịch ${(pct * 100).toInt()}%" else "STT ${(pct * 100).toInt()}%"
+                                // 2. Nhận diện giọng nói STT
+                                chunkProgressMap[idx] = 0.40f
+                                chunkStatusMap[idx] = if (useCapcutTrans) "CapCut dịch..." else "Đang STT..."
                                 updateCombinedProgress()
+
+                                val chunkDuration = if (chunk.durationMs > 0) chunk.durationMs else uploadResult.durationMs
+                                val chunkDoc = workerSttClient.transcribeAudio(
+                                    audioVid = uploadResult.vid,
+                                    audioMd5 = uploadResult.md5,
+                                    durationMs = chunkDuration,
+                                    language = sourceLanguage,
+                                    useTranslation = useCapcutTrans,
+                                    translationLanguage = targetLanguage,
+                                    timeOffsetMs = chunk.startMs
+                                ) { pct, msg ->
+                                    chunkProgressMap[idx] = 0.40f + pct * 0.60f
+                                    chunkStatusMap[idx] = if (useCapcutTrans) "Dịch ${(pct * 100).toInt()}%" else "STT ${(pct * 100).toInt()}%"
+                                    updateCombinedProgress()
+                                }
+
+                                chunkProgressMap[idx] = 1.0f
+                                chunkStatusMap[idx] = "Xong (${chunkDoc.size} câu)"
+                                updateCombinedProgress()
+
+                                Pair(idx, chunkDoc)
                             }
-
-                            chunkProgressMap[idx] = 1.0f
-                            chunkStatusMap[idx] = "Xong (${chunkDoc.size} câu)"
-                            updateCombinedProgress()
-
-                            Pair(idx, chunkDoc)
                         }
                     }
                 }
-            }
 
-            val results = deferredResults.awaitAll().sortedBy { it.first }
-            val allSubtitles = SubtitleDocument()
-            results.forEach { (_, doc) ->
-                allSubtitles.items.addAll(doc.items)
-            }
-            allSubtitles.reindex()
+                val results = deferredResults.awaitAll().sortedBy { it.first }
+                val assembled = SubtitleDocument()
+                results.forEach { (_, doc) ->
+                    assembled.items.addAll(doc.items)
+                }
+                assembled.reindex()
 
-            if (allSubtitles.isEmpty) {
-                throw IllegalStateException("Không nhận diện được bất kỳ câu thoại nào trong tệp này.")
+                if (assembled.isEmpty) {
+                    throw IllegalStateException("Không nhận diện được bất kỳ câu thoại nào trong tệp này.")
+                }
+
+                allSubtitles = assembled
             }
 
             checkCancelled()

@@ -16,6 +16,7 @@ import com.capcut.capsub.MainActivity
 import com.capcut.capsub.data.model.ProcessProgress
 import com.capcut.capsub.data.model.ProcessStage
 import com.capcut.capsub.data.repository.SettingsRepository
+import com.capcut.capsub.domain.media.NetworkHeaderHelper
 import com.capcut.capsub.domain.pipeline.SubtitlingPipeline
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,12 @@ class TranscribeWorkerService : Service() {
             return START_NOT_STICKY
         }
 
-        val videoUriStr = intent?.getStringExtra(EXTRA_VIDEO_URI) ?: return START_NOT_STICKY
+        val rawVideoUriStr = intent?.getStringExtra(EXTRA_VIDEO_URI) ?: return START_NOT_STICKY
+        val videoUriStr = if (NetworkHeaderHelper.isRemoteUrl(rawVideoUriStr) || rawVideoUriStr.contains("b23.tv") || rawVideoUriStr.contains("BV")) {
+            NetworkHeaderHelper.extractCleanUrl(rawVideoUriStr)
+        } else {
+            rawVideoUriStr
+        }
         val videoNameExtra = intent.getStringExtra(EXTRA_VIDEO_NAME)
         val durationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
         val sourceLang = intent.getStringExtra(EXTRA_SOURCE_LANG) ?: "zh-CN"

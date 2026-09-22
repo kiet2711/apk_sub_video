@@ -31,7 +31,10 @@ object AudioExtractor {
         var muxer: MediaMuxer? = null
 
         try {
-            extractor.setDataSource(context, videoUri, null)
+            val headers = if (NetworkHeaderHelper.isRemoteUri(videoUri)) {
+                NetworkHeaderHelper.getHeadersForUri(videoUri)
+            } else null
+            extractor.setDataSource(context, videoUri, headers)
             val trackCount = extractor.trackCount
             var audioTrackIndex = -1
             var audioFormat: MediaFormat? = null
